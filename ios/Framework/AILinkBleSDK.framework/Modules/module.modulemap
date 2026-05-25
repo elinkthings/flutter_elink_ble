@@ -1,0 +1,6 @@
+framework module AILinkBleSDK {
+  umbrella header "AILinkBleSDK-umbrella.h"
+
+  export *
+  module * { export * }
+}

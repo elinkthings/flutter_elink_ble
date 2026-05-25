@@ -1,0 +1,6 @@
+framework module AILinkSecretTool {
+  umbrella header "AILinkSecretTool.h"
+
+  export *
+  module * { export * }
+}
