@@ -30,6 +30,8 @@ class ElinkHomePage extends StatefulWidget {
 }
 
 class _ElinkHomePageState extends State<ElinkHomePage> {
+  static const int _maxLogCount = 160;
+
   final List<StreamSubscription<Object?>> _subscriptions = [];
   final List<String> _logs = <String>[];
   final Set<String> _handshakeStartedRemoteIds = <String>{};
@@ -39,6 +41,7 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
   List<ElinkScanResult> _scanResults = const <ElinkScanResult>[];
   ElinkAdapterState _adapterState = ElinkBle.adapterStateNow;
   bool _isScanning = false;
+  bool _enableTlvParse = false;
   String? _connectedRemoteId;
   String? _bmVersion;
 
@@ -105,9 +108,9 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
         ElinkBle.protocolDataPackets.listen((packet) {
           _addLog(
             '[protocolDataPackets] ${packet.remoteId}: '
-            '${packet.protocol.name.toUpperCase()} '
-            '${_hex(packet.data)}',
+            '${packet.protocol.name.toUpperCase()} payload=${_hex(packet.data)}',
           );
+          _addProtocolPacketParseLogs(packet);
         }),
       )
       ..add(
@@ -115,6 +118,11 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
           _addLog(
             '[passthroughDataPackets] ${packet.remoteId}: '
             '${_hex(packet.data)}',
+          );
+          _addRawFrameParseLogs(
+            source: 'passthroughDataPackets',
+            remoteId: packet.remoteId,
+            data: packet.data,
           );
         }),
       )
@@ -124,6 +132,11 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
             '[characteristicEvents] ${event.remoteId}: '
             '${event.operation.name} ${event.characteristicUuid} '
             '${_hex(event.data)}',
+          );
+          _addRawFrameParseLogs(
+            source: 'characteristicEvents',
+            remoteId: event.remoteId,
+            data: event.data,
           );
         }),
       )
@@ -231,6 +244,16 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
                     ],
                   ),
                 ],
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Parse payload as TLV'),
+                  subtitle: const Text('Off: type + data, On: TLV entries'),
+                  value: _enableTlvParse,
+                  onChanged: (value) {
+                    setState(() => _enableTlvParse = value);
+                    _addLog('[parseConfig] tlv=$value');
+                  },
+                ),
               ],
             ),
           ),
@@ -345,6 +368,11 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
         return;
       }
       await _writeData(remoteId, packet, source: 'handshake');
+      _addRawFrameParseLogs(
+        source: 'tx:handshake',
+        remoteId: remoteId,
+        data: packet,
+      );
     } catch (error) {
       _handshakeStartedRemoteIds.remove(remoteId);
       _addLog('[handshake] $remoteId: $error');
@@ -361,12 +389,130 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
     _addLog('[tx][$source] $remoteId: ${_hex(bytes)}');
   }
 
+  void _addProtocolPacketParseLogs(ElinkProtocolDataPacket packet) {
+    switch (packet.protocol) {
+      case ElinkProtocolDataType.a6:
+        final frame = ElinkDataProcessor.parseA6Frame(
+          ElinkDataProcessor.wrapA6Frame(packet.data),
+        );
+        _addFrameParseLog(
+          source: 'protocolDataPackets',
+          remoteId: packet.remoteId,
+          frame: frame,
+        );
+        _addPayloadParseLog(
+          source: 'protocolDataPackets',
+          remoteId: packet.remoteId,
+          payload: frame.payload,
+        );
+        break;
+      case ElinkProtocolDataType.a7:
+        final cid = packet.deviceType;
+        if (cid == null) {
+          _addPayloadParseLog(
+            source: 'protocolDataPackets',
+            remoteId: packet.remoteId,
+            payload: packet.data,
+            prefix: 'A7 cid is missing, ',
+          );
+          return;
+        }
+        final frame = ElinkDataProcessor.parseA7Frame(
+          ElinkDataProcessor.wrapA7Frame(cid: cid, payload: packet.data),
+        );
+        _addFrameParseLog(
+          source: 'protocolDataPackets',
+          remoteId: packet.remoteId,
+          frame: frame,
+        );
+        _addPayloadParseLog(
+          source: 'protocolDataPackets',
+          remoteId: packet.remoteId,
+          payload: frame.payload,
+        );
+        break;
+    }
+  }
+
+  void _addRawFrameParseLogs({
+    required String source,
+    required String remoteId,
+    required Iterable<int> data,
+  }) {
+    final frame = ElinkDataProcessor.tryParseProtocolFrame(data.toList());
+    if (frame == null) {
+      return;
+    }
+    _addFrameParseLog(source: source, remoteId: remoteId, frame: frame);
+    _addPayloadParseLog(
+      source: source,
+      remoteId: remoteId,
+      payload: frame.payload,
+    );
+  }
+
+  void _addFrameParseLog({
+    required String source,
+    required String remoteId,
+    required ElinkProtocolFrame frame,
+  }) {
+    final cidText = frame.cid == null
+        ? '-'
+        : '0x${frame.cid!.toRadixString(16).padLeft(4, '0').toUpperCase()}';
+    _addLog(
+      '[parse][$source] $remoteId: '
+      'protocol=${frame.protocol.name.toUpperCase()} '
+      'cid=$cidText len=${frame.payloadLength} '
+      'checksum=0x${frame.checksum.toRadixString(16).padLeft(2, '0').toUpperCase()} '
+      'payload=${_hex(frame.payload)}',
+    );
+  }
+
+  void _addPayloadParseLog({
+    required String source,
+    required String remoteId,
+    required Iterable<int> payload,
+    String prefix = '',
+  }) {
+    final payloads = ElinkDataProcessor.tryParsePayload(
+      payload.toList(growable: false),
+      parseTlv: _enableTlvParse,
+    );
+    _addLog(
+      '[parse][$source] $remoteId: '
+      '$prefix${_enableTlvParse ? 'tlv=' : 'payload='}'
+      '${_formatPayloads(payloads, parseTlv: _enableTlvParse)}',
+    );
+  }
+
+  String _formatPayloads(
+    List<ElinkPayload>? payloads, {
+    required bool parseTlv,
+  }) {
+    if (payloads == null) {
+      return 'invalid';
+    }
+    if (payloads.isEmpty) {
+      return 'empty';
+    }
+    return payloads
+        .map((payload) => _formatPayload(payload, parseTlv))
+        .join(' | ');
+  }
+
+  String _formatPayload(ElinkPayload payload, bool parseTlv) {
+    final data = payload.data.isEmpty ? 'empty' : _hex(payload.data);
+    final length = parseTlv ? ', length: ${payload.length}' : '';
+    return '{type: 0x${payload.type.toRadixString(16).padLeft(2, '0').toUpperCase()}'
+        '$length, data: $data}';
+  }
+
   void _addLog(String message) {
     if (!mounted) return;
     final timestamp = _formatTimestamp(DateTime.now());
     setState(() {
       _logs.add('[$timestamp] $message');
-      if (_logs.length > 80) {
+      if (_logs.length > _maxLogCount) {
         _logs.removeAt(0);
       }
     });
@@ -384,7 +530,10 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
 
   String _hex(Iterable<int> data) {
     return data
-        .map((byte) => byte.toRadixString(16).padLeft(2, '0').toUpperCase())
+        .map(
+          (byte) =>
+              (byte & 0xff).toRadixString(16).padLeft(2, '0').toUpperCase(),
+        )
         .join(' ');
   }
 }

@@ -125,7 +125,7 @@ await ElinkBle.writeA7(result.device.remoteId, [0x03, 0x04], cid: 0x1234);
 // Raw write remains available when the business layer already builds full packets.
 await ElinkBle.write(
   result.device.remoteId,
-  ElinkDataProcessor.wrapA6Data([0x01, 0x02]),
+  ElinkDataProcessor.wrapA6Frame([0x01, 0x02]),
 );
 
 // 读取已连接设备 RSSI，结果从 ElinkBle.rssiEvents 返回。
@@ -145,6 +145,36 @@ await ElinkBle.setAndroidPreferredPhy(
 // Disconnect a target device, or disconnect the current connected device.
 await ElinkBle.disconnect(result.device.remoteId);
 await ElinkBle.disconnectCurrent();
+```
+
+通用 A6/A7 frame 解析与 A7/TLV 组包：
+
+```dart
+final commonFrame = ElinkDataProcessor.parseProtocolFrame(
+  ElinkDataProcessor.wrapA6Frame([0x0E]),
+);
+print('${commonFrame.protocol.name} ${commonFrame.payload}');
+
+// 完整 A7 frame：A7 + CID(2) + payloadLength + TLV payload + checksum + 7A。
+final frame = ElinkDataProcessor.parseA7Frame([
+  0xA7, 0x00, 0x8F, 0x08,
+  0x01, 0x06, 0x67, 0xA7, 0x1F, 0x0E, 0x01, 0x08,
+  0xE2, 0x7A,
+]);
+final tlvs = ElinkDataProcessor.parseTlvPayload(frame.payload);
+final timestamp = tlvs.first.readInt(length: 4); // 默认大端序。
+
+final plainPayloads = ElinkDataProcessor.parsePayload(frame.payload);
+print(plainPayloads.first.type);
+
+final request = ElinkDataProcessor.wrapA7TlvFrame(
+  cid: 0x008F,
+  tlvs: [
+    ElinkPayload(type: 0x02), // L=0，无 V。
+    ElinkPayload(type: 0x03, data: [0x01, 0x01]),
+  ],
+);
+await ElinkBle.write(result.device.remoteId, request);
 ```
 
 监听 A6/A7、透传和底层特征值事件：

@@ -121,7 +121,7 @@ await ElinkBle.writeA7(result.device.remoteId, [0x03, 0x04], cid: 0x1234);
 
 await ElinkBle.write(
   result.device.remoteId,
-  ElinkDataProcessor.wrapA6Data([0x01, 0x02]),
+  ElinkDataProcessor.wrapA6Frame([0x01, 0x02]),
 );
 
 await ElinkBle.readRssi(result.device.remoteId);
@@ -135,6 +135,36 @@ await ElinkBle.setAndroidPreferredPhy(
 
 await ElinkBle.disconnect(result.device.remoteId);
 await ElinkBle.disconnectCurrent();
+```
+
+Generic A6/A7 frame parsing and A7/TLV packet building:
+
+```dart
+final commonFrame = ElinkDataProcessor.parseProtocolFrame(
+  ElinkDataProcessor.wrapA6Frame([0x0E]),
+);
+print('${commonFrame.protocol.name} ${commonFrame.payload}');
+
+// Full A7 frame: A7 + CID(2) + payloadLength + TLV payload + checksum + 7A.
+final frame = ElinkDataProcessor.parseA7Frame([
+  0xA7, 0x00, 0x8F, 0x08,
+  0x01, 0x06, 0x67, 0xA7, 0x1F, 0x0E, 0x01, 0x08,
+  0xE2, 0x7A,
+]);
+final tlvs = ElinkDataProcessor.parseTlvPayload(frame.payload);
+final timestamp = tlvs.first.readInt(length: 4); // Big-endian by default.
+
+final plainPayloads = ElinkDataProcessor.parsePayload(frame.payload);
+print(plainPayloads.first.type);
+
+final request = ElinkDataProcessor.wrapA7TlvFrame(
+  cid: 0x008F,
+  tlvs: [
+    ElinkPayload(type: 0x02), // L=0, no V.
+    ElinkPayload(type: 0x03, data: [0x01, 0x01]),
+  ],
+);
+await ElinkBle.write(result.device.remoteId, request);
 ```
 
 Listen for protocol, passthrough, and characteristic callbacks:

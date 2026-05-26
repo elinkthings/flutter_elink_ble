@@ -3,7 +3,7 @@ import 'dart:typed_data';
 
 import '../flutter_elink_ble_platform_interface.dart';
 import 'elink_data_processor.dart';
-import 'elink_models.dart';
+import 'elink_ble_models.dart';
 
 /// 蓝牙适配器状态回调。
 /// Bluetooth adapter state callback.
@@ -53,6 +53,7 @@ class ElinkBle {
 
   static final Map<String, ElinkScanResult> _scanResults =
       <String, ElinkScanResult>{};
+  static final Map<String, String> _connectionEventKeys = <String, String>{};
   static StreamSubscription<Map<dynamic, dynamic>>? _eventSubscription;
   static StreamSubscription<ElinkAdapterState>? _adapterStateCallbackSub;
   static ElinkAdapterState _adapterStateNow = ElinkAdapterState.unknown;
@@ -365,6 +366,7 @@ class ElinkBle {
     await _eventSubscription?.cancel();
     _eventSubscription = null;
     _scanResults.clear();
+    _connectionEventKeys.clear();
     _activeScanSignature = null;
     _adapterStateNow = ElinkAdapterState.unknown;
     _setScanning(false);
@@ -400,7 +402,7 @@ class ElinkBle {
         _setScanning(false);
         break;
       case 'connectionState':
-        _connectionController.add(ElinkDeviceEvent.fromMap(event));
+        _emitConnectionEvent(ElinkDeviceEvent.fromMap(event));
         break;
       case 'servicesDiscovered':
         _serviceDiscoveryController.add(
@@ -441,6 +443,17 @@ class ElinkBle {
           ),
         );
     }
+  }
+
+  /// 发送连接状态事件，并过滤同一设备连续重复的状态。
+  /// Emit connection events and ignore consecutive duplicates per device.
+  static void _emitConnectionEvent(ElinkDeviceEvent event) {
+    final eventKey = '${event.connectionState.name}|${event.reason ?? ''}';
+    if (_connectionEventKeys[event.remoteId] == eventKey) {
+      return;
+    }
+    _connectionEventKeys[event.remoteId] = eventKey;
+    _connectionController.add(event);
   }
 
   static void _setAdapterState(ElinkAdapterState state) {
@@ -551,7 +564,7 @@ class ElinkBle {
     if (payload.isNotEmpty &&
         (payload.first == ElinkDataProcessor.setHandshake ||
             payload.first == ElinkDataProcessor.getHandshake)) {
-      return ElinkDataProcessor.wrapA6Data(payload);
+      return ElinkDataProcessor.wrapA6Frame(payload);
     }
     return data;
   }

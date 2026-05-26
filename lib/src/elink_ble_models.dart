@@ -308,6 +308,152 @@ class ElinkProtocolDataPacket {
   }
 }
 
+/// A6/A7 协议完整 frame 解析结果。
+/// Parsed full A6/A7 protocol frame.
+class ElinkProtocolFrame {
+  ElinkProtocolFrame({
+    required this.protocol,
+    required List<int> payload,
+    required this.checksum,
+    required List<int> rawData,
+    this.cid,
+    List<int> cidBytes = const <int>[],
+  }) : cidBytes = Uint8List.fromList(_checkedBytes(cidBytes, 'cidBytes')),
+       payload = Uint8List.fromList(_checkedBytes(payload, 'payload')),
+       rawData = Uint8List.fromList(_checkedBytes(rawData, 'rawData')) {
+    if (protocol == ElinkProtocolDataType.a7) {
+      final value = cid;
+      if (value == null) {
+        throw ArgumentError.notNull('cid');
+      }
+      if (value < 0 || value > 0xffff) {
+        throw RangeError.range(value, 0, 0xffff, 'cid');
+      }
+      if (this.cidBytes.length != 2) {
+        throw ArgumentError.value(cidBytes, 'cidBytes', 'CID must be 2 bytes');
+      }
+    } else if (cid != null || this.cidBytes.isNotEmpty) {
+      throw ArgumentError.value(cid, 'cid', 'A6 frame does not contain CID');
+    }
+    if (checksum < 0 || checksum > 0xff) {
+      throw RangeError.range(checksum, 0, 0xff, 'checksum');
+    }
+  }
+
+  /// 协议类型：A6 或 A7。
+  /// Protocol type: A6 or A7.
+  final ElinkProtocolDataType protocol;
+
+  /// 产品类型 CID，按协议默认大端序解析。
+  ///
+  /// A6 frame 不包含 CID，因此为 null。
+  /// Product CID parsed as big-endian.
+  ///
+  /// A6 frames do not contain CID, so this is null.
+  final int? cid;
+
+  /// CID 原始 2 字节。
+  ///
+  /// A6 frame 不包含 CID，因此为空。
+  /// Raw 2-byte CID.
+  ///
+  /// A6 frames do not contain CID, so this is empty.
+  final Uint8List cidBytes;
+
+  /// A6/A7 payload 内容。
+  /// A6/A7 payload content.
+  final Uint8List payload;
+
+  /// Frame 中携带的 checksum。
+  /// Checksum byte carried by the frame.
+  final int checksum;
+
+  /// 原始完整 frame。
+  /// Raw full frame.
+  final Uint8List rawData;
+
+  int get payloadLength => payload.length;
+
+  @override
+  String toString() {
+    final cidText = cid == null
+        ? 'null'
+        : '0x${cid!.toRadixString(16).padLeft(4, '0')}';
+    return 'ElinkProtocolFrame(protocol: ${protocol.name}, cid: $cidText, '
+        'payloadLength: $payloadLength)';
+  }
+}
+
+/// 通用 payload 数据。
+/// Generic payload data.
+///
+/// 普通 payload 中 [type] 表示首字节类型，[data] 表示其余内容。
+/// TLV payload 中 [type] 表示 T，[data] 表示 V。
+///
+/// In a plain payload, [type] is the first-byte type and [data] is the
+/// remaining content. In a TLV payload, [type] is T and [data] is V.
+class ElinkPayload {
+  ElinkPayload({required int type, List<int> data = const <int>[]})
+    : type = _checkedByte(type, 'type'),
+      data = Uint8List.fromList(_checkedBytes(data, 'data', maxLength: 0xff));
+
+  /// 使用整数值构造 payload data，默认大端序匹配 ShowDoc 通信协议。
+  /// Build payload data from an integer value. Big-endian by default.
+  factory ElinkPayload.fromInt(
+    int type,
+    int data, {
+    int length = 1,
+    bool littleEndian = false,
+  }) {
+    return ElinkPayload(
+      type: type,
+      data: _intToBytes(data, length: length, littleEndian: littleEndian),
+    );
+  }
+
+  /// 普通 payload type 或 TLV T 字段，1 byte。
+  /// Plain payload type or TLV T field, one byte.
+  final int type;
+
+  /// 普通 payload data 或 TLV V 字段。
+  /// Plain payload data or TLV V field.
+  final Uint8List data;
+
+  /// data 长度；在 TLV 模式中等同于 L 字段。
+  /// Data length; equal to the L field in TLV mode.
+  int get length => data.length;
+
+  /// 普通 payload 原始字节：type + data。
+  /// Raw normal payload bytes: type + data.
+  List<int> get bytes => <int>[type, ...data];
+
+  /// TLV 原始字节：T + L + V。
+  /// Raw TLV bytes: T + L + V.
+  List<int> get tlvBytes => <int>[type, length, ...data];
+
+  /// 从 data 字段读取无符号整数，默认大端序。
+  /// Read an unsigned integer from data. Big-endian by default.
+  int readInt({int offset = 0, int length = 1, bool littleEndian = false}) {
+    if (length < 1 || length > 8) {
+      throw RangeError.range(length, 1, 8, 'length');
+    }
+    final end = offset + length;
+    if (offset < 0 || end > data.length) {
+      throw RangeError(
+        'offset $offset with length $length is outside payload data length '
+        '${data.length}',
+      );
+    }
+    return _bytesToInt(data.sublist(offset, end), littleEndian: littleEndian);
+  }
+
+  @override
+  String toString() {
+    return 'ElinkPayload(type: 0x${type.toRadixString(16).padLeft(2, '0')}, '
+        'length: $length)';
+  }
+}
+
 /// 透传/非协议数据。
 /// Passthrough or non-protocol data.
 ///
@@ -544,4 +690,52 @@ List<int> _bytesFrom(Object? value) {
     return value.map((byte) => (byte as num).toInt() & 0xff).toList();
   }
   return const <int>[];
+}
+
+int _checkedByte(int value, String name) {
+  if (value < 0 || value > 0xff) {
+    throw RangeError.range(value, 0, 0xff, name);
+  }
+  return value & 0xff;
+}
+
+List<int> _checkedBytes(List<int> value, String name, {int? maxLength}) {
+  if (maxLength != null && value.length > maxLength) {
+    throw RangeError.range(value.length, 0, maxLength, '$name.length');
+  }
+  return value.map((byte) => _checkedByte(byte, name)).toList(growable: false);
+}
+
+List<int> _intToBytes(
+  int value, {
+  required int length,
+  required bool littleEndian,
+}) {
+  if (length < 1 || length > 8) {
+    throw RangeError.range(length, 1, 8, 'length');
+  }
+  final maxValue = 1 << (length * 8);
+  if (value < 0 || value >= maxValue) {
+    throw RangeError.range(value, 0, maxValue - 1, 'value');
+  }
+  final bytes = List<int>.filled(length, 0);
+  for (var i = 0; i < length; i++) {
+    final shift = littleEndian ? i * 8 : (length - 1 - i) * 8;
+    bytes[i] = (value >> shift) & 0xff;
+  }
+  return bytes;
+}
+
+int _bytesToInt(List<int> bytes, {required bool littleEndian}) {
+  var value = 0;
+  if (littleEndian) {
+    for (var i = 0; i < bytes.length; i++) {
+      value |= (bytes[i] & 0xff) << (i * 8);
+    }
+    return value;
+  }
+  for (final byte in bytes) {
+    value = (value << 8) | (byte & 0xff);
+  }
+  return value;
 }

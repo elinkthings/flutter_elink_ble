@@ -303,6 +303,160 @@ void main() {
     expect(fakePlatform.lastWriteA7Cid, 0x1234);
   });
 
+  test('data processor parses A6 and A7 protocol frames', () {
+    final a6Frame = ElinkDataProcessor.wrapA6Frame([0x0E]);
+    final parsedA6 = ElinkDataProcessor.parseProtocolFrame(a6Frame);
+
+    expect(a6Frame, [0xA6, 0x01, 0x0E, 0x0F, 0x6A]);
+    expect(parsedA6.protocol, ElinkProtocolDataType.a6);
+    expect(parsedA6.cid, isNull);
+    expect(parsedA6.cidBytes, isEmpty);
+    expect(parsedA6.payload, [0x0E]);
+    expect(parsedA6.checksum, 0x0F);
+    expect(ElinkDataProcessor.parseA6Frame(a6Frame).payload, [0x0E]);
+    expect(ElinkDataProcessor.unwrapA6Frame(a6Frame), [0x0E]);
+
+    final a7Frame = <int>[
+      0xA7,
+      0x00,
+      0x8F,
+      0x08,
+      0x01,
+      0x06,
+      0x67,
+      0xA7,
+      0x1F,
+      0x0E,
+      0x01,
+      0x08,
+      0xE2,
+      0x7A,
+    ];
+
+    final parsedA7 = ElinkDataProcessor.parseProtocolFrame(a7Frame);
+    final tlvs = ElinkDataProcessor.parseTlvPayload(parsedA7.payload);
+
+    expect(parsedA7.protocol, ElinkProtocolDataType.a7);
+    expect(parsedA7.cid, 0x008F);
+    expect(parsedA7.cidBytes, [0x00, 0x8F]);
+    expect(parsedA7.payload, [0x01, 0x06, 0x67, 0xA7, 0x1F, 0x0E, 0x01, 0x08]);
+    expect(parsedA7.checksum, 0xE2);
+    expect(ElinkDataProcessor.parseA7Frame(a7Frame).payload, parsedA7.payload);
+    expect(tlvs, hasLength(1));
+    expect(tlvs.single.type, 0x01);
+    expect(tlvs.single.length, 6);
+    expect(tlvs.single.data, [0x67, 0xA7, 0x1F, 0x0E, 0x01, 0x08]);
+    expect(tlvs.single.readInt(length: 4), 0x67A71F0E);
+    expect(tlvs.single.readInt(offset: 4), 0x01);
+    expect(tlvs.single.readInt(offset: 5), 0x08);
+  });
+
+  test('data processor builds A7 frames from multiple TLVs', () {
+    final frame = ElinkDataProcessor.wrapA7TlvFrame(
+      cid: 0x008F,
+      tlvs: <ElinkPayload>[
+        ElinkPayload(type: 0x02),
+        ElinkPayload(type: 0x03, data: <int>[0x01, 0x01]),
+      ],
+    );
+
+    expect(frame, [
+      0xA7,
+      0x00,
+      0x8F,
+      0x06,
+      0x02,
+      0x00,
+      0x03,
+      0x02,
+      0x01,
+      0x01,
+      0x9E,
+      0x7A,
+    ]);
+
+    final parsed = ElinkDataProcessor.parseA7Frame(frame);
+    final tlvs = ElinkDataProcessor.parseTlvPayload(parsed.payload);
+    expect(tlvs.map((tlv) => tlv.type), [0x02, 0x03]);
+    expect(tlvs[0].data, isEmpty);
+    expect(tlvs[1].data, [0x01, 0x01]);
+  });
+
+  test('data processor rejects malformed A6, A7, and TLV data', () {
+    expect(
+      ElinkDataProcessor.tryParseA6Frame([0xA6, 0x01, 0x0E, 0x00, 0x6A]),
+      isNull,
+    );
+    expect(
+      ElinkDataProcessor.tryParseA7Frame([
+        0xA7,
+        0x00,
+        0x8F,
+        0x01,
+        0x01,
+        0x00,
+        0x7A,
+      ]),
+      isNull,
+    );
+    expect(ElinkDataProcessor.tryParseProtocolFrame([0x00]), isNull);
+    expect(
+      () => ElinkDataProcessor.parseTlvPayload([0x03, 0x02, 0x01]),
+      throwsA(isA<FormatException>()),
+    );
+    expect(ElinkDataProcessor.tryParseTlvPayload([0x03, 0x02, 0x01]), isNull);
+  });
+
+  test('payload integer helpers default to protocol big-endian order', () {
+    final tlv = ElinkPayload.fromInt(0x10, 0x1234, length: 2);
+    final littleEndianTlv = ElinkPayload.fromInt(
+      0x10,
+      0x1234,
+      length: 2,
+      littleEndian: true,
+    );
+
+    expect(tlv.bytes, [0x10, 0x12, 0x34]);
+    expect(tlv.tlvBytes, [0x10, 0x02, 0x12, 0x34]);
+    expect(tlv.readInt(length: 2), 0x1234);
+    expect(littleEndianTlv.tlvBytes, [0x10, 0x02, 0x34, 0x12]);
+    expect(littleEndianTlv.readInt(length: 2, littleEndian: true), 0x1234);
+    expect(ElinkDataProcessor.cidToBytes(0x008F), [0x00, 0x8F]);
+    expect(ElinkDataProcessor.cidFromBytes([0x00, 0x8F]), 0x008F);
+    expect(ElinkDataProcessor.bytesToInt([0x12, 0x34]), 0x1234);
+    expect(
+      ElinkDataProcessor.bytesToInt([0x34, 0x12], littleEndian: true),
+      0x1234,
+    );
+  });
+
+  test('data processor parses payload as plain or TLV objects', () {
+    final payload = <int>[0x04, 0x01, 0x32];
+    final tlvPayload = <int>[0x03, 0x02, 0x01, 0x01];
+
+    final plainPayload = ElinkDataProcessor.parsePlainPayload(payload);
+    final parsedPayload = ElinkDataProcessor.parsePayload(payload);
+    final parsedTlvs = ElinkDataProcessor.parsePayload(
+      tlvPayload,
+      parseTlv: true,
+    );
+
+    expect(plainPayload.type, 0x04);
+    expect(plainPayload.data, [0x01, 0x32]);
+    expect(parsedPayload, hasLength(1));
+    expect(parsedPayload.single.type, 0x04);
+    expect(parsedPayload.single.data, [0x01, 0x32]);
+    expect(ElinkDataProcessor.parsePayload(const <int>[]), isEmpty);
+    expect(parsedTlvs, hasLength(1));
+    expect(parsedTlvs.single.type, 0x03);
+    expect(parsedTlvs.single.data, [0x01, 0x01]);
+    expect(ElinkDataProcessor.tryParsePlainPayload(const <int>[]), isNull);
+    expect(
+      ElinkDataProcessor.tryParsePayload([0x03, 0x02, 0x01], parseTlv: true),
+      isNull,
+    );
+  });
+
   test('getBmVersion sends A6 common command payload', () async {
     final fakePlatform = MockElinkBlePlatform();
     FlutterElinkBlePlatform.instance = fakePlatform;
@@ -373,6 +527,37 @@ void main() {
     await subscription.cancel();
 
     expect(states, [ElinkAdapterState.on]);
+  });
+
+  test('connection stream ignores duplicate consecutive states', () async {
+    final fakePlatform = MockElinkBlePlatform();
+    FlutterElinkBlePlatform.instance = fakePlatform;
+    final events = <ElinkDeviceEvent>[];
+    final subscription = ElinkBle.connectionEvents.listen(events.add);
+
+    fakePlatform.eventController
+      ..add({
+        'type': 'connectionState',
+        'remoteId': 'remote-1',
+        'state': 'connecting',
+      })
+      ..add({
+        'type': 'connectionState',
+        'remoteId': 'remote-1',
+        'state': 'connecting',
+      })
+      ..add({
+        'type': 'connectionState',
+        'remoteId': 'remote-1',
+        'state': 'connected',
+      });
+    await Future<void>.delayed(Duration.zero);
+    await subscription.cancel();
+
+    expect(events.map((event) => event.connectionState), [
+      ElinkConnectionState.connecting,
+      ElinkConnectionState.connected,
+    ]);
   });
 
   test(
@@ -565,11 +750,11 @@ void main() {
     final fakePlatform = MockElinkBlePlatform();
     FlutterElinkBlePlatform.instance = fakePlatform;
     final nextHandshake = ElinkBle.handshakeEvents.first;
-    final setPacket = ElinkDataProcessor.wrapA6Data([
+    final setPacket = ElinkDataProcessor.wrapA6Frame([
       ElinkDataProcessor.setHandshake,
       ...List<int>.filled(16, 0x01),
     ]);
-    final getPacket = ElinkDataProcessor.wrapA6Data([
+    final getPacket = ElinkDataProcessor.wrapA6Frame([
       ElinkDataProcessor.getHandshake,
       ...List<int>.filled(16, 0x02),
     ]);
