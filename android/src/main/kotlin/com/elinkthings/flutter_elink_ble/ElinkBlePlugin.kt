@@ -1,6 +1,7 @@
 package com.elinkthings.flutter_elink_ble
 
 import android.Manifest
+import android.content.ActivityNotFoundException
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattDescriptor
@@ -15,6 +16,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.provider.Settings
 import androidx.core.content.ContextCompat
 import com.pingwang.bluetoothlib.AILinkBleManager
 import com.pingwang.bluetoothlib.AILinkSDK
@@ -92,6 +94,10 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
                     context.packageManager.hasSystemFeature(PackageManager.FEATURE_BLUETOOTH_LE)
                 )
                 "getAdapterState" -> result.success(mapOf("state" to adapterStateName()))
+                "openBluetooth" -> {
+                    openBluetoothInternal()
+                    result.success(null)
+                }
                 "startScan" -> {
                     val timeoutMs = call.argument<Int>("timeoutMs") ?: 10000
                     val services = call.argument<List<String>>("withServices") ?: DEFAULT_SCAN_SERVICES
@@ -356,6 +362,29 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
         markScanStopped()
         if (emitStopped) {
             emit(mapOf("type" to "scanStopped"))
+        }
+    }
+
+    // 请求系统打开蓝牙；Android 会弹出系统确认或跳转蓝牙设置。
+    // Request enabling Bluetooth through the system prompt or Bluetooth settings.
+    private fun openBluetoothInternal() {
+        val adapter = bluetoothAdapter
+            ?: throw IllegalStateException("Bluetooth is not supported on this device")
+        if (!hasConnectPermission()) {
+            throw SecurityException("Missing Bluetooth connect permission")
+        }
+        if (adapter.isEnabled) {
+            emitAdapterState(BluetoothAdapter.STATE_ON)
+            return
+        }
+        val requestIntent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val settingsIntent = Intent(Settings.ACTION_BLUETOOTH_SETTINGS)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        try {
+            context.startActivity(requestIntent)
+        } catch (_: ActivityNotFoundException) {
+            context.startActivity(settingsIntent)
         }
     }
 

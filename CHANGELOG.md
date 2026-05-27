@@ -4,6 +4,7 @@
   helpers.
 * Added `ElinkPayload` as the shared `{type, data}` object for plain and TLV
   payload parsing.
+* Added `ElinkBle.openBluetooth()` to guide users to enable Bluetooth.
 * Added opt-in TLV parsing for A6/A7 payload logs in the example app; plain
   parsing remains the default.
 * Renamed the model source file from `elink_models.dart` to

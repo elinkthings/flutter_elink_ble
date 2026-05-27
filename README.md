@@ -80,6 +80,7 @@ iOS 端已随插件内置 `AILinkBleSDK.framework`。扫描、连接、断开和
 import 'package:flutter_elink_ble/flutter_elink_ble.dart';
 
 final supported = await ElinkBle.isSupported;
+await ElinkBle.openBluetooth();
 await ElinkBle.refreshAdapterState();
 
 final stateSub = ElinkBle.bluetoothState.listen((state) {
@@ -248,6 +249,8 @@ ElinkBle.setBluetoothStateCallback((state) {
 // Clear the callback.
 ElinkBle.setBluetoothStateCallback(null);
 ```
+
+如果需要引导用户打开蓝牙，可调用 `ElinkBle.openBluetooth()`。Android 会拉起系统打开蓝牙确认或蓝牙设置；iOS 不允许 App 直接开启蓝牙，插件只会刷新当前蓝牙状态，不跳转设置。最终是否已打开仍以 `ElinkBle.bluetoothState` 回调为准。
 
 Android 端会监听系统 `BluetoothAdapter.ACTION_STATE_CHANGED`；iOS 端会监听 `ELAILinkBleManagerDelegate.managerDidUpdateState`。两端最终都会归一化成 Dart 的 `ElinkAdapterState`。
 

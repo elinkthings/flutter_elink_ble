@@ -31,6 +31,11 @@ abstract class FlutterElinkBlePlatform extends PlatformInterface {
     throw UnimplementedError('getAdapterState() has not been implemented.');
   }
 
+  /// 请求系统打开蓝牙，最终状态通过 adapter state 事件返回。
+  Future<void> openBluetooth() {
+    throw UnimplementedError('openBluetooth() has not been implemented.');
+  }
+
   Future<void> startScan({
     required int timeoutMs,
     required List<String> withServices,

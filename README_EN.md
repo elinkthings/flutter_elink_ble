@@ -84,6 +84,7 @@ If Bluetooth is on but scanning fails on iOS, check the host app permission text
 import 'package:flutter_elink_ble/flutter_elink_ble.dart';
 
 final supported = await ElinkBle.isSupported;
+await ElinkBle.openBluetooth();
 await ElinkBle.refreshAdapterState();
 
 final stateSub = ElinkBle.bluetoothState.listen((state) {
@@ -227,6 +228,7 @@ Native events are normalized into these Dart streams:
 ## Notes
 
 - Check `ElinkBle.bluetoothStateNow == ElinkAdapterState.on` before scanning.
+- Use `ElinkBle.openBluetooth()` to guide the user to enable Bluetooth. Android opens the system enable prompt or Bluetooth settings; iOS cannot turn Bluetooth on directly, so the plugin only refreshes current state and does not open Settings. Listen to `ElinkBle.bluetoothState` for the final state.
 - Android 7.0+ throttles BLE scanning; avoid more than 5 `startScan` calls in 30 seconds. The plugin reuses an active scan with the same configuration and blocks too-fast Android restarts with `scan_throttled` and `retryAfterMs`.
 - iOS `remoteId` is `CBPeripheral.identifier`, not a MAC address.
 - iOS does not support active MTU requests from apps; use the system-negotiated maximum write length instead.

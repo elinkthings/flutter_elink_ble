@@ -17,6 +17,7 @@ class MockElinkBlePlatform
   int lastScanTimeoutMs = 0;
   int? lastAndroidScanMode;
   int startScanCallCount = 0;
+  bool openedBluetooth = false;
   String? lastConnectedRemoteId;
   bool disconnectedCurrent = false;
   String? lastReadRssiRemoteId;
@@ -42,6 +43,11 @@ class MockElinkBlePlatform
 
   @override
   Future<Map<dynamic, dynamic>> getAdapterState() async => {'state': 'on'};
+
+  @override
+  Future<void> openBluetooth() async {
+    openedBluetooth = true;
+  }
 
   @override
   Future<void> startScan({
@@ -178,6 +184,15 @@ void main() {
 
   test('$MethodChannelFlutterElinkBle is the default instance', () {
     expect(initialPlatform, isInstanceOf<MethodChannelFlutterElinkBle>());
+  });
+
+  test('openBluetooth forwards to platform', () async {
+    final fakePlatform = MockElinkBlePlatform();
+    FlutterElinkBlePlatform.instance = fakePlatform;
+
+    await ElinkBle.openBluetooth();
+
+    expect(fakePlatform.openedBluetooth, isTrue);
   });
 
   test('startScan uses default Elink service UUIDs', () async {

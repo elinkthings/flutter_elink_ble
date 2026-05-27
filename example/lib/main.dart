@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_elink_ble/flutter_elink_ble.dart';
 
 void main() {
+  print("Flutter main started");
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const ElinkExampleApp());
 }
 
@@ -206,6 +208,14 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
               children: [
                 Row(
                   children: [
+                    IconButton.filledTonal(
+                      tooltip: 'Open Bluetooth',
+                      onPressed: _adapterState == ElinkAdapterState.on
+                          ? null
+                          : _openBluetooth,
+                      icon: const Icon(Icons.bluetooth),
+                    ),
+                    const SizedBox(width: 8),
                     FilledButton.icon(
                       onPressed: _isScanning ? null : _startScan,
                       icon: const Icon(Icons.bluetooth_searching),
@@ -324,6 +334,16 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
   Future<void> _stopScan() async {
     try {
       await ElinkBle.stopScan();
+    } catch (error) {
+      _addLog(error.toString());
+    }
+  }
+
+  /// 请求系统打开蓝牙，并立即刷新一次缓存状态。
+  Future<void> _openBluetooth() async {
+    try {
+      await ElinkBle.openBluetooth();
+      await ElinkBle.refreshAdapterState();
     } catch (error) {
       _addLog(error.toString());
     }

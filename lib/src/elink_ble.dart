@@ -64,6 +64,19 @@ class ElinkBle {
   /// Whether this device supports Bluetooth Low Energy.
   static Future<bool> get isSupported => _platform.isSupported();
 
+  /// 请求打开系统蓝牙。
+  /// Request the system to turn on Bluetooth.
+  ///
+  /// Android 会拉起系统打开蓝牙确认；iOS 不允许 App 直接打开蓝牙，
+  /// 只会刷新当前蓝牙状态。最终状态请继续监听 [bluetoothState]。
+  /// Android shows the system enable-Bluetooth prompt. iOS cannot turn on
+  /// Bluetooth directly, so it only refreshes current state. Continue observing
+  /// [bluetoothState] for the final state.
+  static Future<void> openBluetooth() {
+    _ensureListening();
+    return _platform.openBluetooth();
+  }
+
   /// 最近一次收到的 Bluetooth adapter state。
   /// Latest Bluetooth adapter state received from native.
   ///

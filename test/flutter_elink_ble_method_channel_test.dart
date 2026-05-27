@@ -20,6 +20,8 @@ void main() {
               return true;
             case 'getAdapterState':
               return {'state': 'on'};
+            case 'openBluetooth':
+              return null;
             case 'decryptBroadcast':
             case 'initHandshake':
             case 'getHandshakeEncryptData':
@@ -52,6 +54,13 @@ void main() {
       'withServices': ['F0A0', 'FFE0'],
       'androidScanMode': ElinkAndroidScanMode.lowLatency.value,
     });
+  });
+
+  test('openBluetooth uses method channel contract', () async {
+    await platform.openBluetooth();
+
+    expect(calls.single.method, 'openBluetooth');
+    expect(calls.single.arguments, isNull);
   });
 
   test('connect, disconnect, and write use method channel contract', () async {

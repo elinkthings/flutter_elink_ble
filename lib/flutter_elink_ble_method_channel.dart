@@ -41,6 +41,12 @@ class MethodChannelFlutterElinkBle extends FlutterElinkBlePlatform {
     return result ?? const <String, Object?>{'state': 'unknown'};
   }
 
+  /// 请求 native 拉起系统蓝牙开启入口。
+  @override
+  Future<void> openBluetooth() {
+    return methodChannel.invokeMethod<void>('openBluetooth');
+  }
+
   @override
   Future<void> startScan({
     required int timeoutMs,

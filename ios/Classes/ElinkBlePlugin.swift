@@ -65,6 +65,8 @@ public class ElinkBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
       result(true)
     case "getAdapterState":
       result(["state": adapterStateName(bleManager.central.state)])
+    case "openBluetooth":
+      openBluetooth(result: result)
     case "startScan":
       guard let args = call.arguments as? [String: Any] else {
         result(FlutterError(code: "bad_args", message: "Missing scan arguments", details: nil))
@@ -229,6 +231,13 @@ public class ElinkBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
     default:
       result(FlutterMethodNotImplemented)
     }
+  }
+
+  /// iOS 不允许 App 直接开启蓝牙，这里只回传当前蓝牙状态。
+  /// iOS cannot enable Bluetooth directly; this only publishes current state.
+  private func openBluetooth(result: @escaping FlutterResult) {
+    emitAdapterState()
+    result(nil)
   }
 
   private func startScan(
