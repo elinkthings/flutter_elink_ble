@@ -166,6 +166,24 @@ final request = ElinkDataProcessor.wrapA7TlvFrame(
   ],
 );
 await ElinkBle.write(result.device.remoteId, request);
+
+// Split TLVs by max A7 payload length, then wrap each payload as a full frame.
+final payloadChunks = ElinkDataProcessor.buildTlvPayloadChunks(
+  [
+    ElinkPayload(type: 0x02),
+    ElinkPayload(type: 0x03, data: [0x01, 0x01]),
+  ],
+  maxPayloadLength: 20,
+);
+for (final payload in payloadChunks) {
+  final chunkRequest = ElinkDataProcessor.wrapA7Frame(
+    cid: 0x008F,
+    payload: payload,
+  );
+  await ElinkBle.write(result.device.remoteId, chunkRequest);
+}
+
+print(ElinkDataProcessor.formatHex(request)); // A7 00 8F ...
 ```
 
 Listen for protocol, passthrough, and characteristic callbacks:

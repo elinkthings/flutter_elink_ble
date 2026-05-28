@@ -1,3 +1,10 @@
+## 0.0.3
+
+* Added `ElinkDataProcessor.buildTlvPayloadChunks()` for splitting TLV lists
+  into max-length A7 payload chunks.
+* Added `ElinkDataProcessor.formatHex()` and updated the example app to reuse
+  it for byte logs.
+
 ## 0.0.2
 
 * Added common A6/A7 protocol frame parsing, validation, wrapping, and payload

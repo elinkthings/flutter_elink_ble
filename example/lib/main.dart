@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_elink_ble/flutter_elink_ble.dart';
 
 void main() {
-  print("Flutter main started");
   WidgetsFlutterBinding.ensureInitialized();
   runApp(const ElinkExampleApp());
 }
@@ -110,7 +109,8 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
         ElinkBle.protocolDataPackets.listen((packet) {
           _addLog(
             '[protocolDataPackets] ${packet.remoteId}: '
-            '${packet.protocol.name.toUpperCase()} payload=${_hex(packet.data)}',
+            '${packet.protocol.name.toUpperCase()} '
+            'payload=${ElinkDataProcessor.formatHex(packet.data)}',
           );
           _addProtocolPacketParseLogs(packet);
         }),
@@ -119,7 +119,7 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
         ElinkBle.passthroughDataPackets.listen((packet) {
           _addLog(
             '[passthroughDataPackets] ${packet.remoteId}: '
-            '${_hex(packet.data)}',
+            '${ElinkDataProcessor.formatHex(packet.data)}',
           );
           _addRawFrameParseLogs(
             source: 'passthroughDataPackets',
@@ -133,7 +133,7 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
           _addLog(
             '[characteristicEvents] ${event.remoteId}: '
             '${event.operation.name} ${event.characteristicUuid} '
-            '${_hex(event.data)}',
+            '${ElinkDataProcessor.formatHex(event.data)}',
           );
           _addRawFrameParseLogs(
             source: 'characteristicEvents',
@@ -358,7 +358,7 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
       await ElinkBle.getBmVersion(remoteId);
       _addLog(
         '[tx][getBmVersion] $remoteId: '
-        '${_hex(ElinkDataProcessor.getBmVersionPacket())}',
+        '${ElinkDataProcessor.formatHex(ElinkDataProcessor.getBmVersionPacket())}',
       );
     } catch (error) {
       _addLog('[getBmVersion] $remoteId: $error');
@@ -406,7 +406,7 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
   }) async {
     final bytes = List<int>.unmodifiable(data);
     await ElinkBle.write(remoteId, bytes);
-    _addLog('[tx][$source] $remoteId: ${_hex(bytes)}');
+    _addLog('[tx][$source] $remoteId: ${ElinkDataProcessor.formatHex(bytes)}');
   }
 
   void _addProtocolPacketParseLogs(ElinkProtocolDataPacket packet) {
@@ -484,7 +484,7 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
       'protocol=${frame.protocol.name.toUpperCase()} '
       'cid=$cidText len=${frame.payloadLength} '
       'checksum=0x${frame.checksum.toRadixString(16).padLeft(2, '0').toUpperCase()} '
-      'payload=${_hex(frame.payload)}',
+      'payload=${ElinkDataProcessor.formatHex(frame.payload)}',
     );
   }
 
@@ -521,7 +521,9 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
   }
 
   String _formatPayload(ElinkPayload payload, bool parseTlv) {
-    final data = payload.data.isEmpty ? 'empty' : _hex(payload.data);
+    final data = payload.data.isEmpty
+        ? 'empty'
+        : ElinkDataProcessor.formatHex(payload.data);
     final length = parseTlv ? ', length: ${payload.length}' : '';
     return '{type: 0x${payload.type.toRadixString(16).padLeft(2, '0').toUpperCase()}'
         '$length, data: $data}';
@@ -546,14 +548,5 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
 
   String _twoDigits(int value) {
     return value.toString().padLeft(2, '0');
-  }
-
-  String _hex(Iterable<int> data) {
-    return data
-        .map(
-          (byte) =>
-              (byte & 0xff).toRadixString(16).padLeft(2, '0').toUpperCase(),
-        )
-        .join(' ');
   }
 }

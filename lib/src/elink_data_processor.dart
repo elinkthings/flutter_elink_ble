@@ -379,6 +379,38 @@ class ElinkDataProcessor {
     return payload;
   }
 
+  /// 将 TLV 列表按最大 payload 长度拆成多个完整 A7 payload。
+  /// Split TLVs into complete A7 payload chunks by max payload length.
+  ///
+  /// 单个 TLV 超过 [maxPayloadLength] 时不会拆分该 TLV，而是单独组成一个 payload。
+  /// If one TLV exceeds [maxPayloadLength], it is kept whole in its own payload.
+  static List<List<int>> buildTlvPayloadChunks(
+    List<ElinkPayload> tlvs, {
+    required int maxPayloadLength,
+  }) {
+    if (tlvs.isEmpty) {
+      return const <List<int>>[];
+    }
+    final safeMaxLength = maxPayloadLength > 0 ? maxPayloadLength : 1;
+    final chunks = <List<int>>[];
+    var current = <ElinkPayload>[];
+    var currentLength = 0;
+    for (final tlv in tlvs) {
+      final tlvLength = tlv.tlvBytes.length;
+      if (current.isNotEmpty && currentLength + tlvLength > safeMaxLength) {
+        chunks.add(buildTlvPayload(current));
+        current = <ElinkPayload>[];
+        currentLength = 0;
+      }
+      current.add(tlv);
+      currentLength += tlvLength;
+    }
+    if (current.isNotEmpty) {
+      chunks.add(buildTlvPayload(current));
+    }
+    return chunks;
+  }
+
   /// 将多个 TLV 组成完整 A7 frame。
   /// Wrap multiple TLVs into a full A7 frame.
   static List<int> wrapA7TlvFrame({
@@ -457,6 +489,15 @@ class ElinkDataProcessor {
     }
     return checksum(packet.sublist(1, packet.length - 2)) ==
         (packet[packet.length - 2] & 0xff);
+  }
+
+  /// 格式化二进制数据。
+  /// Format bytes as uppercase hex text.
+  static String formatHex(Iterable<int> bytes) {
+    return bytes
+        .map((byte) => (byte & 0xff).toRadixString(16).padLeft(2, '0'))
+        .join(' ')
+        .toUpperCase();
   }
 
   /// 是否为合法 A6 packet.

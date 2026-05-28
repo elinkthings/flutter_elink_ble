@@ -397,6 +397,39 @@ void main() {
     expect(tlvs[1].data, [0x01, 0x01]);
   });
 
+  test('data processor builds TLV payload chunks by max length', () {
+    final tlvs = <ElinkPayload>[
+      ElinkPayload(type: 0x02),
+      ElinkPayload(type: 0x03, data: <int>[0x01, 0x01]),
+      ElinkPayload(type: 0x04, data: <int>[0xFF]),
+    ];
+
+    final chunks = ElinkDataProcessor.buildTlvPayloadChunks(
+      tlvs,
+      maxPayloadLength: 6,
+    );
+
+    expect(chunks, [
+      [0x02, 0x00, 0x03, 0x02, 0x01, 0x01],
+      [0x04, 0x01, 0xFF],
+    ]);
+    expect(
+      ElinkDataProcessor.buildTlvPayloadChunks(tlvs, maxPayloadLength: 0),
+      [
+        [0x02, 0x00],
+        [0x03, 0x02, 0x01, 0x01],
+        [0x04, 0x01, 0xFF],
+      ],
+    );
+    expect(
+      ElinkDataProcessor.buildTlvPayloadChunks(
+        const <ElinkPayload>[],
+        maxPayloadLength: 6,
+      ),
+      isEmpty,
+    );
+  });
+
   test('data processor rejects malformed A6, A7, and TLV data', () {
     expect(
       ElinkDataProcessor.tryParseA6Frame([0xA6, 0x01, 0x0E, 0x00, 0x6A]),
@@ -443,6 +476,9 @@ void main() {
       ElinkDataProcessor.bytesToInt([0x34, 0x12], littleEndian: true),
       0x1234,
     );
+    expect(ElinkDataProcessor.formatHex([0x00, 0x0A, 0xA7]), '00 0A A7');
+    expect(ElinkDataProcessor.formatHex(const <int>[]), isEmpty);
+    expect(ElinkDataProcessor.formatHex([-1, 0x100]), 'FF 00');
   });
 
   test('data processor parses payload as plain or TLV objects', () {

@@ -176,6 +176,24 @@ final request = ElinkDataProcessor.wrapA7TlvFrame(
   ],
 );
 await ElinkBle.write(result.device.remoteId, request);
+
+// 按最大 A7 payload 长度拆分 TLV，再分别组完整 A7 frame 发送。
+final payloadChunks = ElinkDataProcessor.buildTlvPayloadChunks(
+  [
+    ElinkPayload(type: 0x02),
+    ElinkPayload(type: 0x03, data: [0x01, 0x01]),
+  ],
+  maxPayloadLength: 20,
+);
+for (final payload in payloadChunks) {
+  final chunkRequest = ElinkDataProcessor.wrapA7Frame(
+    cid: 0x008F,
+    payload: payload,
+  );
+  await ElinkBle.write(result.device.remoteId, chunkRequest);
+}
+
+print(ElinkDataProcessor.formatHex(request)); // A7 00 8F ...
 ```
 
 监听 A6/A7、透传和底层特征值事件：
