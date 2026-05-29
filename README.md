@@ -17,10 +17,17 @@ ElinkThings BLE SDK 的 Flutter 插件。用于监听 Bluetooth adapter state、
 
 ## 安装
 
+发布到 pub.dev 后，推荐使用 Flutter 命令安装：
+
+```bash
+flutter pub add flutter_elink_ble
+```
+
+或手动在 `pubspec.yaml` 中添加：
+
 ```yaml
 dependencies:
-  flutter_elink_ble:
-    path: ../flutter_elink_ble
+  flutter_elink_ble: ^0.0.3
 ```
 
 ## Android 配置

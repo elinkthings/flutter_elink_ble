@@ -1,7 +1,8 @@
 name: flutter_elink_ble
 description: ElinkThings BLE SDK plugin for scanning, connecting, and processing Elink BLE data.
 version: 0.0.3
-homepage:
+homepage: https://github.com/elinkthings/flutter_elink_ble
+repository: https://github.com/elinkthings/flutter_elink_ble
 
 environment:
   sdk: '>=3.10.4 <4.0.0'

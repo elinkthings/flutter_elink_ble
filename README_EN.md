@@ -22,10 +22,17 @@ Native code delegates scan, connect, disconnect, and write operations to the off
 
 ## Installation
 
+After the package is published to pub.dev, install it with:
+
+```bash
+flutter pub add flutter_elink_ble
+```
+
+Or add it manually to `pubspec.yaml`:
+
 ```yaml
 dependencies:
-  flutter_elink_ble:
-    path: ../flutter_elink_ble
+  flutter_elink_ble: ^0.0.3
 ```
 
 ## Android Setup
