@@ -135,6 +135,7 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
             '${event.operation.name} ${event.characteristicUuid} '
             '${ElinkDataProcessor.formatHex(event.data)}',
           );
+          unawaited(_handleA7CharacteristicChanged(event));
           _addRawFrameParseLogs(
             source: 'characteristicEvents',
             remoteId: event.remoteId,
@@ -407,6 +408,85 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
     final bytes = List<int>.unmodifiable(data);
     await ElinkBle.write(remoteId, bytes);
     _addLog('[tx][$source] $remoteId: ${ElinkDataProcessor.formatHex(bytes)}');
+  }
+
+  /// 在 sample 的 characteristic changed 回调中处理完整 A7 原始 frame。
+  Future<void> _handleA7CharacteristicChanged(
+    ElinkCharacteristicEvent event,
+  ) async {
+    if (event.operation != ElinkCharacteristicOperation.changed) {
+      return;
+    }
+    final frame = ElinkDataProcessor.tryParseA7Frame(event.data);
+    if (frame == null) {
+      return;
+    }
+    final mac = _a7DecryptMac(event.remoteId);
+    if (mac == null || mac.isEmpty) {
+      _addLog('[a7Decrypt] ${event.remoteId}: missing MAC');
+      return;
+    }
+    try {
+      final decrypted = await ElinkDataProcessor.decryptA7Packet(
+        mac: mac,
+        packet: frame.rawData,
+      );
+      if (decrypted == null) {
+        _addLog('[a7Decrypt] ${event.remoteId}: decrypt result is null');
+        return;
+      }
+      final cidText = frame.cid == null
+          ? '-'
+          : '0x${frame.cid!.toRadixString(16).padLeft(4, '0').toUpperCase()}';
+      _addLog(
+        '[a7Decrypt][characteristicEvents] ${event.remoteId}: '
+        'cid=$cidText payload=${ElinkDataProcessor.formatHex(decrypted)}',
+      );
+      _addPayloadParseLog(
+        source: 'a7Decrypt:characteristicEvents',
+        remoteId: event.remoteId,
+        payload: decrypted,
+      );
+    } catch (error) {
+      _addLog('[a7Decrypt] ${event.remoteId}: $error');
+    }
+  }
+
+  /// 获取 A7 解密需要的 little-endian MAC，优先使用扫描广播数据。
+  List<int>? _a7DecryptMac(String remoteId) {
+    for (final result in _scanResults) {
+      if (result.device.remoteId != remoteId) {
+        continue;
+      }
+      final advertisementData = result.advertisementData;
+      final bleData = ElinkDataProcessor.parseAdvertisement(
+        advertisementData.manufacturerData,
+        isBroadcastDevice:
+            advertisementData.isBroadcastDevice &&
+            !advertisementData.isConnectDevice,
+      );
+      if (!bleData.isEmpty && bleData.mac.any((byte) => byte != 0)) {
+        return bleData.mac;
+      }
+    }
+    return _littleEndianMacFromRemoteId(remoteId);
+  }
+
+  /// 将 Android 常见 MAC remoteId 转为 SDK 解密所需的 little-endian byte 顺序。
+  List<int>? _littleEndianMacFromRemoteId(String remoteId) {
+    final hex = remoteId.replaceAll(RegExp(r'[^0-9A-Fa-f]'), '');
+    if (hex.length != 12) {
+      return null;
+    }
+    final bytes = <int>[];
+    for (var index = 0; index < hex.length; index += 2) {
+      final byte = int.tryParse(hex.substring(index, index + 2), radix: 16);
+      if (byte == null) {
+        return null;
+      }
+      bytes.add(byte);
+    }
+    return bytes.reversed.toList(growable: false);
   }
 
   void _addProtocolPacketParseLogs(ElinkProtocolDataPacket packet) {
