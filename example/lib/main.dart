@@ -3,6 +3,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_elink_ble/flutter_elink_ble.dart';
 
+import 'bluetooth_connection_page.dart';
+import 'example_time_utils.dart';
+import 'scan_page.dart';
+import 'wifi_provisioning_page.dart';
+
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   runApp(const ElinkExampleApp());
@@ -44,6 +49,7 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
   bool _isScanning = false;
   bool _enableTlvParse = false;
   String? _connectedRemoteId;
+  String? _connectedMacAddress;
   String? _bmVersion;
 
   @override
@@ -73,10 +79,18 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
       ..add(
         ElinkBle.connectionEvents.listen((event) {
           setState(() {
-            _connectedRemoteId = event.connectionState.isConnected
-                ? event.remoteId
-                : null;
-            if (!event.connectionState.isConnected) {
+            if (event.connectionState.isConnected) {
+              _connectedRemoteId = event.remoteId;
+              _connectedMacAddress = _scanResults
+                  .where((result) => result.device.remoteId == event.remoteId)
+                  .map((result) => result.device.macAddress)
+                  .firstWhere(
+                    (macAddress) => macAddress.isNotEmpty,
+                    orElse: () => '',
+                  );
+            } else {
+              _connectedRemoteId = null;
+              _connectedMacAddress = null;
               _handshakeStartedRemoteIds.remove(event.remoteId);
               _handshakeReadyRemoteIds.remove(event.remoteId);
               _handshakeServiceEvents.remove(event.remoteId);
@@ -201,127 +215,58 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
           ),
         ],
       ),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              children: [
-                Row(
-                  children: [
-                    IconButton.filledTonal(
-                      tooltip: 'Open Bluetooth',
-                      onPressed: _adapterState == ElinkAdapterState.on
-                          ? null
-                          : _openBluetooth,
-                      icon: const Icon(Icons.bluetooth),
-                    ),
-                    const SizedBox(width: 8),
-                    FilledButton.icon(
-                      onPressed: _isScanning ? null : _startScan,
-                      icon: const Icon(Icons.bluetooth_searching),
-                      label: const Text('Scan'),
-                    ),
-                    const SizedBox(width: 8),
-                    OutlinedButton.icon(
-                      onPressed: _isScanning ? _stopScan : null,
-                      icon: const Icon(Icons.stop),
-                      label: const Text('Stop'),
-                    ),
-                    const Spacer(),
-                    if (_connectedRemoteId != null)
-                      IconButton(
-                        tooltip: 'Disconnect',
-                        onPressed: ElinkBle.disconnectCurrent,
-                        icon: const Icon(Icons.bluetooth_disabled),
-                      ),
-                  ],
-                ),
-                if (_connectedRemoteId != null) ...[
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          'BM Version: ${_bmVersion ?? "--"}',
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      FilledButton.tonalIcon(
-                        onPressed: _getBmVersion,
-                        icon: const Icon(Icons.info_outline),
-                        label: const Text('GetBmVersion'),
-                      ),
-                    ],
-                  ),
-                ],
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('Parse payload as TLV'),
-                  subtitle: const Text('Off: type + data, On: TLV entries'),
-                  value: _enableTlvParse,
-                  onChanged: (value) {
-                    setState(() => _enableTlvParse = value);
-                    _addLog('[parseConfig] tlv=$value');
-                  },
-                ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: ListView.separated(
-              itemCount: _scanResults.length,
-              separatorBuilder: (context, index) => const Divider(height: 1),
-              itemBuilder: (context, index) {
-                final result = _scanResults[index];
-                final data = ElinkDataProcessor.parseAdvertisement(
-                  result.advertisementData.manufacturerData,
-                  isBroadcastDevice: result.advertisementData.isBroadcastDevice,
-                );
-                return ListTile(
-                  title: Text(
-                    result.device.platformName.isEmpty
-                        ? 'Unknown'
-                        : result.device.platformName,
-                  ),
-                  subtitle: Text(
-                    [
-                      result.device.remoteId,
-                      'RSSI ${result.rssi}',
-                      'CID ${data.cidValue}',
-                      'VID ${data.vidValue}',
-                      'PID ${data.pidValue}',
-                      data.macAddress,
-                    ].join('  '),
-                  ),
-                  trailing: FilledButton.tonal(
-                    onPressed: () => ElinkBle.connect(result.device),
-                    child: const Text('Connect'),
-                  ),
-                );
-              },
-            ),
-          ),
-          SizedBox(
-            height: 180,
-            child: ListView.builder(
-              reverse: true,
-              itemCount: _logs.length,
-              itemBuilder: (context, index) {
-                final log = _logs[_logs.length - 1 - index];
-                return Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 4,
-                  ),
-                  child: Text(log, style: const TextStyle(fontSize: 12)),
-                );
-              },
-            ),
-          ),
-        ],
-      ),
+      body: _buildCurrentPage(),
     );
+  }
+
+  /// Build the current example page from BLE connection state (根据 BLE 连接状态构建当前示例页面).
+  Widget _buildCurrentPage() {
+    if (_connectedRemoteId == null) {
+      return ScanPage(
+        adapterState: _adapterState,
+        isScanning: _isScanning,
+        scanResults: _scanResults,
+        onOpenBluetooth: () => unawaited(_openBluetooth()),
+        onStartScan: () => unawaited(_startScan()),
+        onStopScan: () => unawaited(_stopScan()),
+        onConnect: (device) => unawaited(_connect(device)),
+      );
+    }
+    return BluetoothConnectionPage(
+      connectedRemoteId: _connectedRemoteId,
+      connectedMacAddress: _connectedMacAddress,
+      bmVersion: _bmVersion,
+      enableTlvParse: _enableTlvParse,
+      logs: _logs,
+      onDisconnect: () => unawaited(_disconnectCurrent()),
+      onGetBmVersion: () => unawaited(_getBmVersion()),
+      onOpenWifiProvisioning: _openWifiProvisioning,
+      onEnableTlvParseChanged: (value) {
+        setState(() => _enableTlvParse = value);
+        _addLog('[parseConfig] tlv=$value');
+      },
+    );
+  }
+
+  /// Connect one scanned BLE device and log failures (连接单个已扫描 BLE 设备并记录失败).
+  Future<void> _connect(ElinkDevice device) async {
+    try {
+      _connectedMacAddress = device.macAddress.isEmpty
+          ? null
+          : device.macAddress;
+      await ElinkBle.connect(device);
+    } catch (error) {
+      _addLog('[connect] ${device.remoteId}: $error');
+    }
+  }
+
+  /// Disconnect the current BLE device and log failures (断开当前 BLE 设备并记录失败).
+  Future<void> _disconnectCurrent() async {
+    try {
+      await ElinkBle.disconnectCurrent();
+    } catch (error) {
+      _addLog('[disconnectCurrent] $error');
+    }
   }
 
   Future<void> _startScan() async {
@@ -364,6 +309,19 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
     } catch (error) {
       _addLog('[getBmVersion] $remoteId: $error');
     }
+  }
+
+  /// Open the WiFi provisioning page with the connected BLE remoteId (使用当前已连接 BLE remoteId 打开 WiFi 配网页面).
+  void _openWifiProvisioning() {
+    final remoteId = _connectedRemoteId;
+    if (remoteId == null) {
+      return;
+    }
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => WifiProvisioningPage(initialRemoteId: remoteId),
+      ),
+    );
   }
 
   bool _hasWriteCharacteristic(ElinkServiceDiscoveredEvent event) {
@@ -458,13 +416,7 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
       if (result.device.remoteId != remoteId) {
         continue;
       }
-      final advertisementData = result.advertisementData;
-      final bleData = ElinkDataProcessor.parseAdvertisement(
-        advertisementData.manufacturerData,
-        isBroadcastDevice:
-            advertisementData.isBroadcastDevice &&
-            !advertisementData.isConnectDevice,
-      );
+      final bleData = result.advertisementData.identity;
       if (!bleData.isEmpty && bleData.mac.any((byte) => byte != 0)) {
         return bleData.mac;
       }
@@ -611,22 +563,12 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
 
   void _addLog(String message) {
     if (!mounted) return;
-    final timestamp = _formatTimestamp(DateTime.now());
+    final timestamp = ExampleTimeUtils.formatTimestamp(DateTime.now());
     setState(() {
       _logs.add('[$timestamp] $message');
       if (_logs.length > _maxLogCount) {
         _logs.removeAt(0);
       }
     });
-  }
-
-  String _formatTimestamp(DateTime time) {
-    return '${_twoDigits(time.hour)}:'
-        '${_twoDigits(time.minute)}:'
-        '${_twoDigits(time.second)}';
-  }
-
-  String _twoDigits(int value) {
-    return value.toString().padLeft(2, '0');
   }
 }
