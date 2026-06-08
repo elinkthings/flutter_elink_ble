@@ -1,3 +1,17 @@
+## 0.1.0
+
+* Added Dart-side WiFi provisioning support that builds A6 WiFi commands through
+  the shared `writeA6` path instead of platform-specific WiFi method-channel
+  calls.
+* Added WiFi scan, status, response, MAC, SSID, password, device SN, and server
+  configuration event parsing.
+* Added typed WiFi models and streams for access points, connection status,
+  command responses, and generic WiFi events.
+* Added a WiFi command log switch. Command logs are disabled by default.
+* Added manufacturer data MAC parsing and exposed the parsed MAC on scan
+  results.
+* Updated the example app with scan, connection, and WiFi provisioning pages.
+
 ## 0.0.3
 
 * Added `ElinkDataProcessor.buildTlvPayloadChunks()` for splitting TLV lists
