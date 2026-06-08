@@ -4,6 +4,8 @@ import 'dart:typed_data';
 import '../flutter_elink_ble_platform_interface.dart';
 import 'elink_data_processor.dart';
 import 'elink_ble_models.dart';
+import 'elink_wifi.dart';
+import 'elink_wifi_models.dart';
 
 /// 蓝牙适配器状态回调。
 /// Bluetooth adapter state callback.
@@ -190,6 +192,40 @@ class ElinkBle {
     return _mtuController.stream;
   }
 
+  /// WiFi 配网相关原始事件 stream。
+  /// Generic WiFi configuration event stream.
+  static Stream<ElinkWifiEvent> get wifiEvents {
+    return ElinkWifi.events;
+  }
+
+  /// WiFi 扫描结果 stream。同一 MAC/编号会被去重更新。
+  /// WiFi scan results stream, deduplicated by MAC or scan id.
+  static Stream<List<ElinkWifiAccessPoint>> get wifiScanResults {
+    return ElinkWifi.scanResults;
+  }
+
+  /// BLE/WiFi/模块工作状态事件 stream。
+  /// BLE, WiFi, and module work status stream.
+  static Stream<ElinkWifiStatusEvent> get wifiStatusEvents {
+    return ElinkWifi.statusEvents;
+  }
+
+  /// WiFi 设置命令响应事件 stream。
+  /// WiFi setting command response stream.
+  static Stream<ElinkWifiResponseEvent> get wifiResponseEvents {
+    return ElinkWifi.responseEvents;
+  }
+
+  /// Whether WiFi command debug logs are emitted; disabled by default (是否输出 WiFi 指令调试日志，默认关闭).
+  static bool get wifiCommandLoggingEnabled {
+    return ElinkWifi.commandLoggingEnabled;
+  }
+
+  /// Set whether WiFi command debug logs are emitted (设置是否输出 WiFi 指令调试日志).
+  static set wifiCommandLoggingEnabled(bool enabled) {
+    ElinkWifi.commandLoggingEnabled = enabled;
+  }
+
   /// Flutter A6 handshake 结果回调。
   /// Flutter A6 handshake result callbacks.
   static Stream<ElinkHandshakeEvent> get handshakeEvents {
@@ -363,6 +399,160 @@ class ElinkBle {
     );
   }
 
+  /// Scan nearby WiFi access points; results are emitted through [wifiScanResults] and [wifiEvents] (扫描设备附近 WiFi 热点，结果从 [wifiScanResults] 和 [wifiEvents] 返回).
+  ///
+  /// [remoteId] is the native remote identifier of the connected BLE device (已连接 BLE 设备的 native remote identifier).
+  static Future<void> wifiScan(String remoteId) {
+    return ElinkWifi.scan(remoteId);
+  }
+
+  /// Query BLE, WiFi, and module work status; result is emitted through [wifiStatusEvents] (查询 BLE/WiFi/模块工作状态，结果从 [wifiStatusEvents] 返回).
+  ///
+  /// [remoteId] is the native remote identifier of the connected BLE device (已连接 BLE 设备的 native remote identifier).
+  static Future<void> wifiGetCurrentState(String remoteId) {
+    return ElinkWifi.getCurrentState(remoteId);
+  }
+
+  /// Configure target WiFi MAC and password, then ask the module to connect (设置目标 WiFi MAC 和密码，并请求模块连接).
+  ///
+  /// Prefer passing [ElinkWifiAccessPoint.macAddress] directly (建议直接使用 [ElinkWifiAccessPoint.macAddress]).
+  ///
+  /// [macAddress] is the WiFi BSSID/MAC from scan results (扫描结果中的 WiFi BSSID/MAC).
+  ///
+  /// [remoteId] is the native remote identifier of the connected BLE device (已连接 BLE 设备的 native remote identifier).
+  ///
+  /// [password] is the target WiFi password; pass an empty string for open networks (目标 WiFi 密码；开放网络可传空字符串).
+  static Future<void> wifiConfigureAndConnect(
+    String remoteId, {
+    required String macAddress,
+    required String password,
+  }) {
+    return ElinkWifi.configureAndConnect(
+      remoteId,
+      macAddress: macAddress,
+      password: password,
+    );
+  }
+
+  /// Set WiFi password (设置 WiFi 密码).
+  ///
+  /// [remoteId] is the native remote identifier of the connected BLE device (已连接 BLE 设备的 native remote identifier).
+  ///
+  /// [password] is the target WiFi password; pass an empty string for open networks (目标 WiFi 密码；开放网络可传空字符串).
+  static Future<void> wifiSetPassword(
+    String remoteId, {
+    required String password,
+  }) {
+    return ElinkWifi.setPassword(remoteId, password: password);
+  }
+
+  /// Ask the module to connect the configured WiFi (请求模块连接已配置的 WiFi).
+  ///
+  /// [remoteId] is the native remote identifier of the connected BLE device (已连接 BLE 设备的 native remote identifier).
+  static Future<void> wifiConnect(String remoteId) {
+    return ElinkWifi.connect(remoteId);
+  }
+
+  /// Ask the module to disconnect current WiFi (请求模块断开当前 WiFi).
+  ///
+  /// [remoteId] is the native remote identifier of the connected BLE device (已连接 BLE 设备的 native remote identifier).
+  static Future<void> wifiDisconnect(String remoteId) {
+    return ElinkWifi.disconnect(remoteId);
+  }
+
+  /// Query connected WiFi SSID; result is emitted through [wifiEvents] (查询当前连接的 WiFi 名称，结果从 [wifiEvents] 返回).
+  ///
+  /// [remoteId] is the native remote identifier of the connected BLE device (已连接 BLE 设备的 native remote identifier).
+  static Future<void> wifiGetConnectedSsid(String remoteId) {
+    return ElinkWifi.getConnectedSsid(remoteId);
+  }
+
+  /// Query saved WiFi password; result is emitted through [wifiEvents] (查询当前保存的 WiFi 密码，结果从 [wifiEvents] 返回).
+  ///
+  /// [remoteId] is the native remote identifier of the connected BLE device (已连接 BLE 设备的 native remote identifier).
+  static Future<void> wifiGetConnectedPassword(String remoteId) {
+    return ElinkWifi.getConnectedPassword(remoteId);
+  }
+
+  /// Query connected WiFi MAC; result is emitted through [wifiEvents] (查询当前连接的 WiFi MAC，结果从 [wifiEvents] 返回).
+  ///
+  /// [remoteId] is the native remote identifier of the connected BLE device (已连接 BLE 设备的 native remote identifier).
+  static Future<void> wifiGetConnectedMac(String remoteId) {
+    return ElinkWifi.getConnectedMac(remoteId);
+  }
+
+  /// Query WiFi module deviceId/SN; result is emitted through [wifiEvents] (查询 WiFi 模块 deviceId/SN，结果从 [wifiEvents] 返回).
+  ///
+  /// [remoteId] is the native remote identifier of the connected BLE device (已连接 BLE 设备的 native remote identifier).
+  static Future<void> wifiGetDeviceSn(String remoteId) {
+    return ElinkWifi.getDeviceSn(remoteId);
+  }
+
+  /// Query server host, port, and path; results are emitted through [wifiEvents] (查询服务端 host、port、path，结果从 [wifiEvents] 返回).
+  ///
+  /// [remoteId] is the native remote identifier of the connected BLE device (已连接 BLE 设备的 native remote identifier).
+  static Future<void> wifiGetServerInfo(String remoteId) {
+    return ElinkWifi.getServerInfo(remoteId);
+  }
+
+  /// Query server host or URL (查询服务端 host 或 URL).
+  ///
+  /// [remoteId] is the native remote identifier of the connected BLE device (已连接 BLE 设备的 native remote identifier).
+  static Future<void> wifiGetServerHost(String remoteId) {
+    return ElinkWifi.getServerHost(remoteId);
+  }
+
+  /// Query server port (查询服务端端口号).
+  ///
+  /// [remoteId] is the native remote identifier of the connected BLE device (已连接 BLE 设备的 native remote identifier).
+  static Future<void> wifiGetServerPort(String remoteId) {
+    return ElinkWifi.getServerPort(remoteId);
+  }
+
+  /// Query server path (查询服务端 path).
+  ///
+  /// [remoteId] is the native remote identifier of the connected BLE device (已连接 BLE 设备的 native remote identifier).
+  static Future<void> wifiGetServerPath(String remoteId) {
+    return ElinkWifi.getServerPath(remoteId);
+  }
+
+  /// Set server host, port, and path for the WiFi module (设置 WiFi 模块访问的服务端 host、port、path).
+  ///
+  /// [remoteId] is the native remote identifier of the connected BLE device (已连接 BLE 设备的 native remote identifier).
+  ///
+  /// [host] is the server domain, IP, or URL host (服务端域名、IP 或 URL host).
+  ///
+  /// [port] is the server port (服务端端口号).
+  ///
+  /// [path] is the server path; leave it empty when unused (服务端路径；无路径时可留空).
+  static Future<void> wifiSetServerInfo(
+    String remoteId, {
+    required String host,
+    required int port,
+    String path = '',
+  }) {
+    return ElinkWifi.setServerInfo(
+      remoteId,
+      host: host,
+      port: port,
+      path: path,
+    );
+  }
+
+  /// Ask the WiFi/BLE module to restart (请求 WiFi/BLE 模块重启).
+  ///
+  /// [remoteId] is the native remote identifier of the connected BLE device (已连接 BLE 设备的 native remote identifier).
+  static Future<void> wifiRestart(String remoteId) {
+    return ElinkWifi.restart(remoteId);
+  }
+
+  /// Ask the WiFi/BLE module to reset to factory data (请求 WiFi/BLE 模块恢复出厂设置).
+  ///
+  /// [remoteId] is the native remote identifier of the connected BLE device (已连接 BLE 设备的 native remote identifier).
+  static Future<void> wifiReset(String remoteId) {
+    return ElinkWifi.reset(remoteId);
+  }
+
   /// 主动查询一次 native adapter state，并触发 Dart stream/callback。
   /// Query native adapter state once and publish it through Dart stream/callback.
   static Future<void> refreshAdapterState() async {
@@ -383,6 +573,7 @@ class ElinkBle {
     _activeScanSignature = null;
     _adapterStateNow = ElinkAdapterState.unknown;
     _setScanning(false);
+    await ElinkWifi.dispose();
     await _platform.dispose();
   }
 

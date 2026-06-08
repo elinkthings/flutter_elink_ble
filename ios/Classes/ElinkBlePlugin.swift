@@ -485,6 +485,8 @@ public class ElinkBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
       "type": "scanResult",
       "remoteId": remoteId,
       "platformName": cbPeripheral.name ?? advName,
+      "macAddress": peripheral.macAddressString,
+      "macData": FlutterStandardTypedData(bytes: peripheral.macData),
       "rssi": rssi,
       "advertisementData": [
         "advName": advName,
@@ -759,7 +761,8 @@ extension ElinkBlePlugin: ELAILinkBleManagerDelegate {
 
   public func aiLinkBleReceiveA6Data(_ packet: Data, aILinkPeripheral: ELAILinkPeripheral) {
     let remoteId = remoteId(for: aILinkPeripheral.peripheral)
-    emitProtocolData(normalizeA6ProtocolData(packet), protocolName: "a6", remoteId: remoteId)
+    let payload = normalizeA6ProtocolData(packet)
+    emitProtocolData(payload, protocolName: "a6", remoteId: remoteId)
   }
 
   public func aiLinkBleReceiveRawData(_ rawData: Data, aILinkPeripheral: ELAILinkPeripheral) {

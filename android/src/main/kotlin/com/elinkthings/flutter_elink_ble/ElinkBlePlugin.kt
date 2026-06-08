@@ -573,6 +573,7 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
                 "type" to "scanResult",
                 "remoteId" to result.address,
                 "platformName" to (result.name ?: ""),
+                "macAddress" to result.address,
                 "rssi" to result.rssi,
                 "advertisementData" to mapOf(
                     "advName" to (result.name ?: ""),

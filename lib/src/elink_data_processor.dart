@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import '../flutter_elink_ble_platform_interface.dart';
+import 'elink_byte_utils.dart';
 import 'elink_ble_models.dart';
 
 /// Elink 协议数据处理工具。
@@ -36,35 +37,10 @@ class ElinkDataProcessor {
     List<int> manufacturerData, {
     bool isBroadcastDevice = false,
   }) {
-    final cid = List<int>.filled(2, 0);
-    final vid = List<int>.filled(2, 0);
-    final pid = List<int>.filled(2, 0);
-    final mac = List<int>.filled(6, 0);
-    final length = manufacturerData.length;
-
-    if (manufacturerData.isEmpty) {
-      return ElinkBleData(cid: cid, vid: vid, pid: pid, mac: mac);
-    }
-
-    if (isBroadcastDevice && length >= 3) {
-      var start = 0;
-      cid[1] = manufacturerData[start++];
-      vid[1] = manufacturerData[start++];
-      pid[1] = manufacturerData[start++];
-      if (length >= 10) {
-        mac.setRange(0, mac.length, manufacturerData.sublist(start, start + 6));
-      }
-    } else if (length >= 14 &&
-        manufacturerData[0] == 0x6E &&
-        manufacturerData[1] == 0x49) {
-      var start = 2;
-      cid.setRange(0, 2, manufacturerData.sublist(start, start += 2));
-      vid.setRange(0, 2, manufacturerData.sublist(start, start += 2));
-      pid.setRange(0, 2, manufacturerData.sublist(start, start += 2));
-      mac.setRange(0, 6, manufacturerData.sublist(start, start + 6));
-    }
-
-    return ElinkBleData(cid: cid, vid: vid, pid: pid, mac: mac);
+    return ElinkBleData.fromManufacturerData(
+      manufacturerData,
+      isBroadcastDevice: isBroadcastDevice,
+    );
   }
 
   /// 将 Android `manufacturerSpecificData` map 展平成 iOS/Dart 相同的 byte list。
@@ -153,7 +129,7 @@ class ElinkDataProcessor {
   /// A6 格式：0xA6 + payloadLength(1) + payload(n) + checksum + 0x6A。
   /// A6 format: 0xA6 + payloadLength(1) + payload(n) + checksum + 0x6A.
   static ElinkProtocolFrame parseA6Frame(List<int> data) {
-    final packet = _checkedBytes(data, 'data');
+    final packet = ElinkByteUtils.checkedBytes(data, 'data');
     if (packet.length < 4) {
       throw FormatException('A6 frame must contain at least 4 bytes', data);
     }
@@ -196,7 +172,7 @@ class ElinkDataProcessor {
   /// A7 格式：0xA7 + CID(2) + payloadLength(1) + payload(n) + checksum + 0x7A。
   /// A7 format: 0xA7 + CID(2) + payloadLength(1) + payload(n) + checksum + 0x7A.
   static ElinkProtocolFrame parseA7Frame(List<int> data) {
-    final packet = _checkedBytes(data, 'data');
+    final packet = ElinkByteUtils.checkedBytes(data, 'data');
     if (packet.length < 6) {
       throw FormatException('A7 frame must contain at least 6 bytes', data);
     }
@@ -271,7 +247,7 @@ class ElinkDataProcessor {
   /// 解析普通 payload：首字节为 type，后续字节为 data。
   /// Parse a plain payload: first byte is type, remaining bytes are data.
   static ElinkPayload parsePlainPayload(List<int> payload) {
-    final bytes = _checkedBytes(payload, 'payload');
+    final bytes = ElinkByteUtils.checkedBytes(payload, 'payload');
     if (bytes.isEmpty) {
       throw FormatException('Payload is empty', payload);
     }
@@ -322,7 +298,7 @@ class ElinkDataProcessor {
   /// TLV 格式：T(1) + L(1) + V(n)。数据不完整时抛出 [FormatException]。
   /// TLV format: T(1) + L(1) + V(n). Throws [FormatException] when malformed.
   static List<ElinkPayload> parseTlvPayload(List<int> payload) {
-    final bytes = _checkedBytes(payload, 'payload');
+    final bytes = ElinkByteUtils.checkedBytes(payload, 'payload');
     final tlvs = <ElinkPayload>[];
     var offset = 0;
     while (offset < bytes.length) {
@@ -463,11 +439,14 @@ class ElinkDataProcessor {
   /// 包装 A7 加密数据帧。
   /// Wrap encrypted payload into an A7 frame.
   static List<int> wrapA7Data(List<int> cid, List<int> encryptedPayload) {
-    final cidBytes = _checkedBytes(cid, 'cid');
+    final cidBytes = ElinkByteUtils.checkedBytes(cid, 'cid');
     if (cidBytes.length != 2) {
       throw ArgumentError.value(cid, 'cid', 'CID must contain exactly 2 bytes');
     }
-    final payload = _checkedBytes(encryptedPayload, 'encryptedPayload');
+    final payload = ElinkByteUtils.checkedBytes(
+      encryptedPayload,
+      'encryptedPayload',
+    );
     if (payload.length > 0xff) {
       throw RangeError.range(payload.length, 0, 0xff, 'payload.length');
     }
@@ -494,10 +473,7 @@ class ElinkDataProcessor {
   /// 格式化二进制数据。
   /// Format bytes as uppercase hex text.
   static String formatHex(Iterable<int> bytes) {
-    return bytes
-        .map((byte) => (byte & 0xff).toRadixString(16).padLeft(2, '0'))
-        .join(' ')
-        .toUpperCase();
+    return ElinkByteUtils.formatHex(bytes);
   }
 
   /// 是否为合法 A6 packet.
@@ -586,18 +562,7 @@ class ElinkDataProcessor {
   /// bytes 转 int，默认大端序以匹配通信协议字段。
   /// Convert bytes to int. Big-endian by default for protocol fields.
   static int bytesToInt(List<int> bytes, {bool littleEndian = false}) {
-    final checkedBytes = _checkedBytes(bytes, 'bytes');
-    var value = 0;
-    if (littleEndian) {
-      for (var i = 0; i < checkedBytes.length; i++) {
-        value |= checkedBytes[i] << (i * 8);
-      }
-      return value;
-    }
-    for (final byte in checkedBytes) {
-      value = (value << 8) | byte;
-    }
-    return value;
+    return ElinkByteUtils.bytesToInt(bytes, littleEndian: littleEndian);
   }
 
   /// int 转 bytes，默认 little-endian，适配 Elink payload 常见字段。
@@ -607,27 +572,10 @@ class ElinkDataProcessor {
     int length = 4,
     bool littleEndian = true,
   }) {
-    final bytes = <int>[];
-    if (littleEndian) {
-      for (var i = 0; i < length; i++) {
-        bytes.add((value >> (i * 8)) & 0xff);
-      }
-    } else {
-      for (var i = length - 1; i >= 0; i--) {
-        bytes.add((value >> (i * 8)) & 0xff);
-      }
-    }
-    return bytes;
-  }
-
-  static List<int> _checkedBytes(List<int> value, String name) {
-    return value
-        .map((byte) {
-          if (byte < 0 || byte > 0xff) {
-            throw RangeError.range(byte, 0, 0xff, name);
-          }
-          return byte & 0xff;
-        })
-        .toList(growable: false);
+    return ElinkByteUtils.intToBytes(
+      value,
+      length: length,
+      littleEndian: littleEndian,
+    );
   }
 }

@@ -1,14 +1,36 @@
 import 'dart:typed_data';
 
+import 'elink_byte_utils.dart';
+
 /// 蓝牙适配器状态。
 /// Bluetooth adapter state.
 enum ElinkAdapterState {
+  /// 未知蓝牙适配器状态。
+  /// Unknown Bluetooth adapter state.
   unknown,
+
+  /// 当前设备不支持或无法使用 BLE。
+  /// BLE is unavailable on the current device.
   unavailable,
+
+  /// App 没有蓝牙权限。
+  /// The app is not authorized to use Bluetooth.
   unauthorized,
+
+  /// 蓝牙正在打开。
+  /// Bluetooth is turning on.
   turningOn,
+
+  /// 蓝牙已打开。
+  /// Bluetooth is on.
   on,
+
+  /// 蓝牙正在关闭。
+  /// Bluetooth is turning off.
   turningOff,
+
+  /// 蓝牙已关闭。
+  /// Bluetooth is off.
   off;
 
   /// 将 native 传来的 string state 转成 Dart enum，未知值统一兜底为 unknown。
@@ -24,9 +46,20 @@ enum ElinkAdapterState {
 /// BLE 连接状态。
 /// GATT connection state.
 enum ElinkConnectionState {
+  /// BLE 设备已断开连接。
+  /// The BLE device is disconnected.
   disconnected,
+
+  /// BLE 设备正在连接。
+  /// The BLE device is connecting.
   connecting,
+
+  /// BLE 设备已连接。
+  /// The BLE device is connected.
   connected,
+
+  /// BLE 设备正在断开连接。
+  /// The BLE device is disconnecting.
   disconnecting;
 
   /// 是否已经连接，可用于 UI button enable/disable.
@@ -45,14 +78,33 @@ enum ElinkConnectionState {
 
 /// 写入类型。
 /// GATT write type.
-enum ElinkWriteType { withResponse, withoutResponse }
+enum ElinkWriteType {
+  /// 写入后等待 GATT response。
+  /// Write with a GATT response.
+  withResponse,
+
+  /// 写入后不等待 GATT response。
+  /// Write without a GATT response.
+  withoutResponse,
+}
 
 /// Android 扫描模式，对应 Android `ScanSettings.SCAN_MODE_*`.
 /// Android scan mode mapping to `ScanSettings.SCAN_MODE_*`.
 enum ElinkAndroidScanMode {
+  /// 机会扫描模式，仅返回其它客户端扫描到的结果。
+  /// Opportunistic scan mode that only receives results from other scans.
   opportunistic(-1),
+
+  /// 低功耗扫描模式。
+  /// Low power scan mode.
   lowPower(0),
+
+  /// 平衡功耗和延迟的扫描模式。
+  /// Balanced scan mode.
   balanced(1),
+
+  /// 低延迟高频扫描模式。
+  /// Low latency scan mode.
   lowLatency(2);
 
   const ElinkAndroidScanMode(this.value);
@@ -63,8 +115,13 @@ enum ElinkAndroidScanMode {
 /// Android BLE PHY 选项，对应 `BluetoothDevice.PHY_LE_*`.
 /// Android BLE PHY option mapping to `BluetoothDevice.PHY_LE_*`.
 enum ElinkAndroidPhy {
+  /// LE 1M PHY。
   phy1M(1),
+
+  /// LE 2M PHY。
   phy2M(2),
+
+  /// LE Coded PHY。
   phyCoded(3);
 
   const ElinkAndroidPhy(this.value);
@@ -105,6 +162,7 @@ class ElinkDevice {
     required this.remoteId,
     this.platformName = '',
     this.connectionState = ElinkConnectionState.disconnected,
+    this.macAddress = '',
   });
 
   final String remoteId;
@@ -114,20 +172,26 @@ class ElinkDevice {
   final String platformName;
   final ElinkConnectionState connectionState;
 
+  /// 从 manufacturerData 广播内容中解析出的设备 MAC 地址。
+  /// Device MAC address parsed from manufacturerData advertisement content.
+  final String macAddress;
+
   ElinkDevice copyWith({
     String? remoteId,
     String? platformName,
     ElinkConnectionState? connectionState,
+    String? macAddress,
   }) {
     return ElinkDevice(
       remoteId: remoteId ?? this.remoteId,
       platformName: platformName ?? this.platformName,
       connectionState: connectionState ?? this.connectionState,
+      macAddress: macAddress ?? this.macAddress,
     );
   }
 
   @override
-  String toString() => 'ElinkDevice($remoteId, $platformName)';
+  String toString() => 'ElinkDevice($remoteId, $platformName, $macAddress)';
 }
 
 /// BLE advertisement 数据，包含 service UUIDs 与 manufacturer data。
@@ -137,13 +201,21 @@ class ElinkAdvertisementData {
     this.advName = '',
     this.serviceUuids = const <ElinkGuid>[],
     this.manufacturerData = const <int>[],
+    this.identity = const ElinkBleData.empty(),
     this.raw = const <String, Object?>{},
   });
 
   final String advName;
   final List<ElinkGuid> serviceUuids;
   final List<int> manufacturerData;
+  final ElinkBleData identity;
   final Map<String, Object?> raw;
+
+  /// 从 manufacturerData 中解析出的 MAC 地址；无有效广播内容时为空字符串。
+  /// MAC address parsed from manufacturerData; empty when no valid identity exists.
+  String get macAddress {
+    return identity.isEmpty ? '' : identity.macAddress;
+  }
 
   /// 是否包含 Elink broadcast service UUID `F0A0`.
   /// Whether the advertisement includes Elink broadcast service UUID `F0A0`.
@@ -166,11 +238,18 @@ class ElinkAdvertisementData {
     final serviceUuids = (map['serviceUuids'] as List? ?? const [])
         .map((uuid) => ElinkGuid(uuid.toString().toUpperCase()))
         .toList(growable: false);
-    final manufacturerData = _bytesFrom(map['manufacturerData']);
+    final manufacturerData = ElinkByteUtils.bytesFrom(map['manufacturerData']);
+    final isBroadcastDevice = serviceUuids.contains(ElinkGuid.broadcastDevice);
+    final isConnectDevice = serviceUuids.contains(ElinkGuid.connectDevice);
+    final identity = ElinkBleData.fromManufacturerData(
+      manufacturerData,
+      isBroadcastDevice: isBroadcastDevice && !isConnectDevice,
+    );
     return ElinkAdvertisementData(
       advName: map['advName']?.toString() ?? '',
       serviceUuids: serviceUuids,
       manufacturerData: manufacturerData,
+      identity: identity,
       raw: Map<String, Object?>.from(map),
     );
   }
@@ -193,15 +272,21 @@ class ElinkScanResult {
 
   factory ElinkScanResult.fromMap(Map<dynamic, dynamic> map) {
     final remoteId = map['remoteId']?.toString() ?? '';
+    final advertisementData = ElinkAdvertisementData.fromMap(
+      map['advertisementData'] as Map?,
+    );
+    final nativeMacAddress = map['macAddress']?.toString() ?? '';
+    final macAddress = advertisementData.macAddress.isNotEmpty
+        ? advertisementData.macAddress
+        : nativeMacAddress;
     return ElinkScanResult(
       device: ElinkDevice(
         remoteId: remoteId,
         platformName:
             map['platformName']?.toString() ?? map['advName']?.toString() ?? '',
+        macAddress: macAddress,
       ),
-      advertisementData: ElinkAdvertisementData.fromMap(
-        map['advertisementData'] as Map?,
-      ),
+      advertisementData: advertisementData,
       rssi: (map['rssi'] as num?)?.toInt() ?? 0,
       timeStamp: DateTime.now(),
     );
@@ -260,7 +345,12 @@ class ElinkServiceDiscoveredEvent {
 /// SDK 协议数据类型。
 /// SDK protocol data type.
 enum ElinkProtocolDataType {
+  /// A6 协议数据。
+  /// A6 protocol data.
   a6,
+
+  /// A7 协议数据。
+  /// A7 protocol data.
   a7;
 
   static ElinkProtocolDataType fromName(Object? value) {
@@ -301,7 +391,7 @@ class ElinkProtocolDataPacket {
     return ElinkProtocolDataPacket(
       remoteId: map['remoteId']?.toString() ?? '',
       protocol: ElinkProtocolDataType.fromName(map['protocol']),
-      data: Uint8List.fromList(_bytesFrom(map['data'])),
+      data: Uint8List.fromList(ElinkByteUtils.bytesFrom(map['data'])),
       characteristicUuid: map['characteristicUuid']?.toString() ?? '',
       deviceType: (map['deviceType'] as num?)?.toInt(),
     );
@@ -318,9 +408,15 @@ class ElinkProtocolFrame {
     required List<int> rawData,
     this.cid,
     List<int> cidBytes = const <int>[],
-  }) : cidBytes = Uint8List.fromList(_checkedBytes(cidBytes, 'cidBytes')),
-       payload = Uint8List.fromList(_checkedBytes(payload, 'payload')),
-       rawData = Uint8List.fromList(_checkedBytes(rawData, 'rawData')) {
+  }) : cidBytes = Uint8List.fromList(
+         ElinkByteUtils.checkedBytes(cidBytes, 'cidBytes'),
+       ),
+       payload = Uint8List.fromList(
+         ElinkByteUtils.checkedBytes(payload, 'payload'),
+       ),
+       rawData = Uint8List.fromList(
+         ElinkByteUtils.checkedBytes(rawData, 'rawData'),
+       ) {
     if (protocol == ElinkProtocolDataType.a7) {
       final value = cid;
       if (value == null) {
@@ -394,8 +490,10 @@ class ElinkProtocolFrame {
 /// remaining content. In a TLV payload, [type] is T and [data] is V.
 class ElinkPayload {
   ElinkPayload({required int type, List<int> data = const <int>[]})
-    : type = _checkedByte(type, 'type'),
-      data = Uint8List.fromList(_checkedBytes(data, 'data', maxLength: 0xff));
+    : type = ElinkByteUtils.checkedByte(type, 'type'),
+      data = Uint8List.fromList(
+        ElinkByteUtils.checkedBytes(data, 'data', maxLength: 0xff),
+      );
 
   /// 使用整数值构造 payload data，默认大端序匹配 ShowDoc 通信协议。
   /// Build payload data from an integer value. Big-endian by default.
@@ -407,7 +505,11 @@ class ElinkPayload {
   }) {
     return ElinkPayload(
       type: type,
-      data: _intToBytes(data, length: length, littleEndian: littleEndian),
+      data: ElinkByteUtils.intToBytes(
+        data,
+        length: length,
+        littleEndian: littleEndian,
+      ),
     );
   }
 
@@ -444,7 +546,10 @@ class ElinkPayload {
         '${data.length}',
       );
     }
-    return _bytesToInt(data.sublist(offset, end), littleEndian: littleEndian);
+    return ElinkByteUtils.bytesToInt(
+      data.sublist(offset, end),
+      littleEndian: littleEndian,
+    );
   }
 
   @override
@@ -473,7 +578,7 @@ class ElinkPassthroughDataPacket {
   factory ElinkPassthroughDataPacket.fromMap(Map<dynamic, dynamic> map) {
     return ElinkPassthroughDataPacket(
       remoteId: map['remoteId']?.toString() ?? '',
-      data: Uint8List.fromList(_bytesFrom(map['data'])),
+      data: Uint8List.fromList(ElinkByteUtils.bytesFrom(map['data'])),
       characteristicUuid: map['characteristicUuid']?.toString() ?? '',
     );
   }
@@ -482,10 +587,24 @@ class ElinkPassthroughDataPacket {
 /// 底层特征值操作回调类型。
 /// Characteristic low-level callback type.
 enum ElinkCharacteristicOperation {
+  /// 读取 characteristic 回调。
+  /// Characteristic read callback.
   read,
+
+  /// 写入 characteristic 回调。
+  /// Characteristic write callback.
   write,
+
+  /// 写入 descriptor 回调。
+  /// Descriptor write callback.
   descriptorWrite,
+
+  /// characteristic value changed 回调。
+  /// Characteristic value changed callback.
   changed,
+
+  /// notification 订阅状态变更回调。
+  /// Notification state changed callback.
   notificationStateChanged;
 
   static ElinkCharacteristicOperation fromName(Object? value) {
@@ -522,7 +641,7 @@ class ElinkCharacteristicEvent {
       serviceUuid: map['serviceUuid']?.toString() ?? '',
       characteristicUuid: map['characteristicUuid']?.toString() ?? '',
       descriptorUuid: map['descriptorUuid']?.toString() ?? '',
-      data: Uint8List.fromList(_bytesFrom(map['data'])),
+      data: Uint8List.fromList(ElinkByteUtils.bytesFrom(map['data'])),
     );
   }
 }
@@ -641,6 +760,14 @@ class ElinkBleData {
     required this.mac,
   });
 
+  /// 创建空的广播设备标识。
+  /// Create an empty advertisement identity.
+  const ElinkBleData.empty()
+    : cid = const <int>[0, 0],
+      vid = const <int>[0, 0],
+      pid = const <int>[0, 0],
+      mac = const <int>[0, 0, 0, 0, 0, 0];
+
   final List<int> cid;
   final List<int> vid;
   final List<int> pid;
@@ -649,7 +776,9 @@ class ElinkBleData {
   /// 2-byte CID value，按 Elink payload 顺序转为 int.
   /// 2-byte CID value converted to int using Elink payload order.
   int get cidValue => _twoByteValue(cid);
+
   int get vidValue => _twoByteValue(vid);
+
   int get pidValue => _twoByteValue(pid);
 
   /// 广播中的 MAC 为 little-endian，这里转换为常见显示格式。
@@ -665,77 +794,52 @@ class ElinkBleData {
         mac.every((byte) => byte == 0);
   }
 
+  /// 按 showdoc manufacturerData 规则解析 CID/VID/PID/MAC。
+  ///
+  /// [manufacturerData] is the BLE manufacturer data bytes (BLE 厂商自定义广播数据).
+  ///
+  /// [isBroadcastDevice] selects the legacy broadcast layout when company ID is absent (无 Company ID 时使用旧广播布局).
+  static ElinkBleData fromManufacturerData(
+    List<int> manufacturerData, {
+    bool isBroadcastDevice = false,
+  }) {
+    final bytes = ElinkByteUtils.bytesFrom(manufacturerData);
+    final cid = List<int>.filled(2, 0);
+    final vid = List<int>.filled(2, 0);
+    final pid = List<int>.filled(2, 0);
+    final mac = List<int>.filled(6, 0);
+
+    if (bytes.isEmpty) {
+      return ElinkBleData(cid: cid, vid: vid, pid: pid, mac: mac);
+    }
+
+    if (bytes.length >= 14 && bytes[0] == 0x6E && bytes[1] == 0x49) {
+      var start = 2;
+      cid.setRange(0, 2, bytes.sublist(start, start += 2));
+      vid.setRange(0, 2, bytes.sublist(start, start += 2));
+      pid.setRange(0, 2, bytes.sublist(start, start += 2));
+      mac.setRange(0, 6, bytes.sublist(start, start + 6));
+    } else if (isBroadcastDevice && bytes.length >= 3) {
+      var start = 0;
+      cid[1] = bytes[start++];
+      vid[1] = bytes[start++];
+      pid[1] = bytes[start++];
+      if (bytes.length >= 9) {
+        mac.setRange(0, mac.length, bytes.sublist(start, start + 6));
+      }
+    }
+
+    return ElinkBleData(cid: cid, vid: vid, pid: pid, mac: mac);
+  }
+
   static int _twoByteValue(List<int> bytes) {
     if (bytes.length != 2) {
       return 0;
     }
-    return ((bytes[0] & 0xff) << 8) | (bytes[1] & 0xff);
+    return ElinkByteUtils.bytesToInt(bytes);
   }
 
   static String _littleEndianMac(List<int> bytes) {
-    return bytes.reversed
-        .map((byte) => byte.toRadixString(16).padLeft(2, '0').toUpperCase())
-        .join(':');
+    return ElinkByteUtils.formatMac(bytes, littleEndian: true);
   }
-}
-
-List<int> _bytesFrom(Object? value) {
-  if (value == null) {
-    return const <int>[];
-  }
-  if (value is Uint8List) {
-    return value.toList(growable: false);
-  }
-  if (value is List) {
-    return value.map((byte) => (byte as num).toInt() & 0xff).toList();
-  }
-  return const <int>[];
-}
-
-int _checkedByte(int value, String name) {
-  if (value < 0 || value > 0xff) {
-    throw RangeError.range(value, 0, 0xff, name);
-  }
-  return value & 0xff;
-}
-
-List<int> _checkedBytes(List<int> value, String name, {int? maxLength}) {
-  if (maxLength != null && value.length > maxLength) {
-    throw RangeError.range(value.length, 0, maxLength, '$name.length');
-  }
-  return value.map((byte) => _checkedByte(byte, name)).toList(growable: false);
-}
-
-List<int> _intToBytes(
-  int value, {
-  required int length,
-  required bool littleEndian,
-}) {
-  if (length < 1 || length > 8) {
-    throw RangeError.range(length, 1, 8, 'length');
-  }
-  final maxValue = 1 << (length * 8);
-  if (value < 0 || value >= maxValue) {
-    throw RangeError.range(value, 0, maxValue - 1, 'value');
-  }
-  final bytes = List<int>.filled(length, 0);
-  for (var i = 0; i < length; i++) {
-    final shift = littleEndian ? i * 8 : (length - 1 - i) * 8;
-    bytes[i] = (value >> shift) & 0xff;
-  }
-  return bytes;
-}
-
-int _bytesToInt(List<int> bytes, {required bool littleEndian}) {
-  var value = 0;
-  if (littleEndian) {
-    for (var i = 0; i < bytes.length; i++) {
-      value |= (bytes[i] & 0xff) << (i * 8);
-    }
-    return value;
-  }
-  for (final byte in bytes) {
-    value = (value << 8) | (byte & 0xff);
-  }
-  return value;
 }

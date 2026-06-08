@@ -31,6 +31,7 @@ class MockElinkBlePlatform
   String? lastWriteType;
   String? lastWriteA6RemoteId;
   Uint8List lastWriteA6Payload = Uint8List(0);
+  final List<Uint8List> writeA6Payloads = <Uint8List>[];
   String? lastWriteA7RemoteId;
   Uint8List lastWriteA7Payload = Uint8List(0);
   int? lastWriteA7Cid;
@@ -123,6 +124,7 @@ class MockElinkBlePlatform
   }) async {
     lastWriteA6RemoteId = remoteId;
     lastWriteA6Payload = payload;
+    writeA6Payloads.add(payload);
   }
 
   @override
@@ -481,6 +483,52 @@ void main() {
     expect(ElinkDataProcessor.formatHex([-1, 0x100]), 'FF 00');
   });
 
+  test('byte utils convert common protocol values', () {
+    expect(ElinkByteUtils.intToBytes(0x1234, length: 2), [0x34, 0x12]);
+    expect(ElinkByteUtils.intToBytes(0x1234, length: 2, littleEndian: false), [
+      0x12,
+      0x34,
+    ]);
+    expect(ElinkByteUtils.bytesToInt([0x12, 0x34]), 0x1234);
+    expect(ElinkByteUtils.bytesToInt([0x34, 0x12], littleEndian: true), 0x1234);
+    expect(ElinkByteUtils.bytesFrom(Uint8List.fromList([0x01, 0xff])), [
+      0x01,
+      0xff,
+    ]);
+    expect(ElinkByteUtils.bytesFrom([0x100]), [0x00]);
+    expect(ElinkByteUtils.formatHex([0x00, 0x0A, 0xA7]), '00 0A A7');
+    expect(ElinkByteUtils.formatMac([0xAA, 0xBB, 0xCC]), 'AA:BB:CC');
+    expect(
+      ElinkByteUtils.formatMac([0xAA, 0xBB, 0xCC], littleEndian: true),
+      'CC:BB:AA',
+    );
+  });
+
+  test('advertisement parser extracts MAC from manufacturer data', () {
+    final data = ElinkDataProcessor.parseAdvertisement([
+      0x6E,
+      0x49,
+      0x00,
+      0x8F,
+      0x00,
+      0x01,
+      0x00,
+      0x01,
+      0x21,
+      0x3E,
+      0xCF,
+      0xF8,
+      0x6D,
+      0x22,
+    ]);
+
+    expect(data.cidValue, 0x008F);
+    expect(data.vidValue, 0x0001);
+    expect(data.pidValue, 0x0001);
+    expect(data.mac, [0x21, 0x3E, 0xCF, 0xF8, 0x6D, 0x22]);
+    expect(data.macAddress, '22:6D:F8:CF:3E:21');
+  });
+
   test('data processor parses payload as plain or TLV objects', () {
     final payload = <int>[0x04, 0x01, 0x32];
     final tlvPayload = <int>[0x03, 0x02, 0x01, 0x01];
@@ -518,6 +566,351 @@ void main() {
     expect(fakePlatform.lastWriteA6Payload, [0x0E]);
   });
 
+  test('WiFi APIs build A6 command payloads in Dart', () async {
+    final fakePlatform = MockElinkBlePlatform();
+    FlutterElinkBlePlatform.instance = fakePlatform;
+
+    await ElinkBle.wifiConfigureAndConnect(
+      'remote-1',
+      macAddress: 'AA:BB:CC:DD:EE:FF',
+      password: '12345678',
+    );
+    await ElinkBle.wifiSetServerInfo(
+      'remote-1',
+      host: 'example.com',
+      port: 1883,
+      path: '/mqtt',
+    );
+
+    expect(fakePlatform.lastWriteA6RemoteId, 'remote-1');
+    expect(fakePlatform.writeA6Payloads.map((payload) => payload.toList()), [
+      [0x84, 0xFF, 0xEE, 0xDD, 0xCC, 0xBB, 0xAA],
+      [0x86, 0x00, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38],
+      [0x88, 0x01],
+      [
+        0x8B,
+        0x00,
+        0x65,
+        0x78,
+        0x61,
+        0x6D,
+        0x70,
+        0x6C,
+        0x65,
+        0x2E,
+        0x63,
+        0x6F,
+        0x6D,
+      ],
+      [0x8D, 0x07, 0x5B],
+      [0x96, 0x00, 0x2F, 0x6D, 0x71, 0x74, 0x74],
+    ]);
+  });
+
+  test(
+    'WiFi command logs are disabled by default and can be enabled',
+    () async {
+      final fakePlatform = MockElinkBlePlatform();
+      FlutterElinkBlePlatform.instance = fakePlatform;
+      final commands = <ElinkWifiEvent>[];
+      final subscription = ElinkBle.wifiEvents
+          .where((event) => event.type == 'wifiCommand')
+          .listen(commands.add);
+
+      await ElinkBle.wifiGetCurrentState('remote-1');
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(ElinkBle.wifiCommandLoggingEnabled, isFalse);
+      expect(commands, isEmpty);
+
+      ElinkBle.wifiCommandLoggingEnabled = true;
+      await ElinkBle.wifiGetCurrentState('remote-1');
+      await ElinkBle.wifiGetCurrentState('remote-1');
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      await subscription.cancel();
+
+      expect(commands, hasLength(2));
+      expect(commands.map((event) => event.command), [0x26, 0x26]);
+      expect(commands.map((event) => event.value), [
+        'getCurrentState',
+        'getCurrentState',
+      ]);
+      expect(fakePlatform.writeA6Payloads.map((payload) => payload.toList()), [
+        [0x26],
+        [0x26],
+        [0x26],
+      ]);
+    },
+  );
+
+  test(
+    'ElinkWifi APIs and protocol events work without ElinkBle facade',
+    () async {
+      final fakePlatform = MockElinkBlePlatform();
+      FlutterElinkBlePlatform.instance = fakePlatform;
+      final nextStatus = ElinkWifi.statusEvents.first;
+
+      await ElinkWifi.configureAndConnect(
+        'remote-1',
+        macAddress: 'AA:BB:CC:DD:EE:FF',
+        password: '12345678',
+      );
+      fakePlatform.eventController.add({
+        'type': 'protocolData',
+        'remoteId': 'remote-1',
+        'protocol': 'a6',
+        'data': Uint8List.fromList([0x26, 0x32, 0x02]),
+      });
+
+      final status = await nextStatus;
+
+      expect(fakePlatform.lastWriteA6RemoteId, 'remote-1');
+      expect(fakePlatform.writeA6Payloads.map((payload) => payload.toList()), [
+        [0x84, 0xFF, 0xEE, 0xDD, 0xCC, 0xBB, 0xAA],
+        [0x86, 0x00, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38],
+        [0x88, 0x01],
+      ]);
+      expect(status.bleStatus, ElinkWifiBleStatus.paired);
+      expect(status.wifiStatus, ElinkWifiConnectionStatus.connectedAp);
+      expect(status.workStatus, ElinkWifiWorkStatus.ready);
+      expect(status.rawBleStatus, 2);
+      expect(status.rawWifiStatus, 3);
+      expect(status.rawWorkStatus, 2);
+    },
+  );
+
+  test('WiFi scan and status events are parsed into typed streams', () async {
+    final fakePlatform = MockElinkBlePlatform();
+    FlutterElinkBlePlatform.instance = fakePlatform;
+    final nextResults = ElinkBle.wifiScanResults.firstWhere(
+      (results) => results.isNotEmpty,
+    );
+    final nextStatus = ElinkBle.wifiStatusEvents.first;
+    final nextResponse = ElinkBle.wifiResponseEvents.first;
+
+    fakePlatform.eventController
+      ..add({
+        'type': 'wifiScanResult',
+        'remoteId': 'remote-1',
+        'id': 1,
+        'ssid': 'Office',
+        'macAddress': 'AA:BB:CC:DD:EE:FF',
+        'rssi': -42,
+        'securityType': ElinkWifiSecurityType.wpa2Psk.value,
+        'useState': ElinkWifiUseState.saved.value,
+      })
+      ..add({
+        'type': 'wifiStatus',
+        'remoteId': 'remote-1',
+        'bleStatus': 2,
+        'wifiStatus': 3,
+        'workStatus': 2,
+        'failStatus': ElinkWifiConnectFailCode.wrongPassword.value,
+      })
+      ..add({
+        'type': 'wifiResponse',
+        'remoteId': 'remote-1',
+        'command': 0x88,
+        'status': ElinkWifiCommandStatus.success.value,
+      });
+
+    final results = await nextResults;
+    final status = await nextStatus;
+    final response = await nextResponse;
+
+    expect(results.single.ssid, 'Office');
+    expect(results.single.securityType, ElinkWifiSecurityType.wpa2Psk);
+    expect(results.single.useState, ElinkWifiUseState.saved);
+    expect(status.wifiStatus, ElinkWifiConnectionStatus.connectedAp);
+    expect(status.failStatus, ElinkWifiConnectFailCode.wrongPassword);
+    expect(status.rawWifiStatus, 3);
+    expect(status.rawFailStatus, 2);
+    expect(response.command, 0x88);
+    expect(response.status, ElinkWifiCommandStatus.success);
+  });
+
+  test('WiFi scan protocol payloads are parsed in Dart', () async {
+    final fakePlatform = MockElinkBlePlatform();
+    FlutterElinkBlePlatform.instance = fakePlatform;
+    final nextResults = ElinkBle.wifiScanResults.firstWhere(
+      (results) => results.isNotEmpty,
+    );
+    final nextFinished = ElinkBle.wifiEvents.firstWhere(
+      (event) => event.type == 'wifiScanFinished',
+    );
+
+    await ElinkBle.wifiScan('remote-1');
+    fakePlatform.eventController
+      ..add({
+        'type': 'protocolData',
+        'remoteId': 'remote-1',
+        'protocol': 'a6',
+        'data': Uint8List.fromList([0x81, 0x01, ...'Office'.codeUnits]),
+      })
+      ..add({
+        'type': 'protocolData',
+        'remoteId': 'remote-1',
+        'protocol': 'a6',
+        'data': Uint8List.fromList([
+          0x82,
+          0x01,
+          0xFF,
+          0xEE,
+          0xDD,
+          0xCC,
+          0xBB,
+          0xAA,
+          0xD6,
+          ElinkWifiSecurityType.wpa2Psk.value,
+          ElinkWifiUseState.saved.value,
+        ]),
+      })
+      ..add({
+        'type': 'protocolData',
+        'remoteId': 'remote-1',
+        'protocol': 'a6',
+        'data': Uint8List.fromList([0x83, 0x01]),
+      });
+
+    final results = await nextResults;
+    final finished = await nextFinished;
+
+    expect(fakePlatform.lastWriteA6Payload.toList(), [0x80, 0x01]);
+    expect(results.single.ssid, 'Office');
+    expect(results.single.macAddress, 'AA:BB:CC:DD:EE:FF');
+    expect(results.single.rssi, -42);
+    expect(results.single.securityType, ElinkWifiSecurityType.wpa2Psk);
+    expect(results.single.useState, ElinkWifiUseState.saved);
+    expect(finished.status, 1);
+    expect(finished.accessPoints.single.macAddress, 'AA:BB:CC:DD:EE:FF');
+  });
+
+  test('WiFi duplicate native events are ignored', () async {
+    final fakePlatform = MockElinkBlePlatform();
+    FlutterElinkBlePlatform.instance = fakePlatform;
+    final statuses = <ElinkWifiStatusEvent>[];
+    final subscription = ElinkBle.wifiStatusEvents.listen(statuses.add);
+    final event = <String, Object?>{
+      'type': 'wifiStatus',
+      'remoteId': 'remote-dup-native',
+      'bleStatus': 2,
+      'wifiStatus': 3,
+      'workStatus': 2,
+    };
+
+    fakePlatform.eventController
+      ..add(event)
+      ..add(event);
+
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    await subscription.cancel();
+
+    expect(statuses, hasLength(1));
+  });
+
+  test('WiFi protocol and native status events are deduplicated', () async {
+    final fakePlatform = MockElinkBlePlatform();
+    FlutterElinkBlePlatform.instance = fakePlatform;
+    final statuses = <ElinkWifiStatusEvent>[];
+    final subscription = ElinkBle.wifiStatusEvents.listen(statuses.add);
+
+    fakePlatform.eventController
+      ..add({
+        'type': 'protocolData',
+        'remoteId': 'remote-dup-mixed',
+        'protocol': 'a6',
+        'data': Uint8List.fromList([0x26, 0x32, 0x02]),
+      })
+      ..add({
+        'type': 'wifiStatus',
+        'remoteId': 'remote-dup-mixed',
+        'bleStatus': 2,
+        'wifiStatus': 3,
+        'workStatus': 2,
+      });
+
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    await subscription.cancel();
+
+    expect(statuses, hasLength(1));
+    expect(statuses.single.bleStatus, ElinkWifiBleStatus.paired);
+    expect(statuses.single.wifiStatus, ElinkWifiConnectionStatus.connectedAp);
+    expect(statuses.single.workStatus, ElinkWifiWorkStatus.ready);
+  });
+
+  test('WiFi SSID and password protocol payloads emit text values', () async {
+    final fakePlatform = MockElinkBlePlatform();
+    FlutterElinkBlePlatform.instance = fakePlatform;
+    final events = <ElinkWifiEvent>[];
+    final subscription = ElinkBle.wifiEvents.listen(events.add);
+
+    fakePlatform.eventController
+      ..add({
+        'type': 'protocolData',
+        'remoteId': 'remote-1',
+        'protocol': 'a6',
+        'data': Uint8List.fromList([0x94, ...'Office'.codeUnits]),
+      })
+      ..add({
+        'type': 'protocolData',
+        'remoteId': 'remote-1',
+        'protocol': 'a6',
+        'data': Uint8List.fromList([0x87, ...'12345678'.codeUnits]),
+      });
+
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    await subscription.cancel();
+
+    expect(
+      events.where((event) => event.type == 'wifiConnectedSsid').single.value,
+      'Office',
+    );
+    expect(
+      events
+          .where((event) => event.type == 'wifiConnectedPassword')
+          .single
+          .value,
+      '12345678',
+    );
+  });
+
+  test(
+    'WiFi server host protocol packets are emitted after final chunk',
+    () async {
+      final fakePlatform = MockElinkBlePlatform();
+      FlutterElinkBlePlatform.instance = fakePlatform;
+      final events = <ElinkWifiEvent>[];
+      final subscription = ElinkBle.wifiEvents.listen(events.add);
+
+      fakePlatform.eventController
+        ..add({
+          'type': 'protocolData',
+          'remoteId': 'remote-1',
+          'protocol': 'a6',
+          'data': Uint8List.fromList([
+            0x8C,
+            0x01,
+            ...'ailink.iot.aic'.codeUnits,
+          ]),
+        })
+        ..add({
+          'type': 'protocolData',
+          'remoteId': 'remote-1',
+          'protocol': 'a6',
+          'data': Uint8List.fromList([0x8C, 0x00, ...'are.net.cn'.codeUnits]),
+        });
+
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      await subscription.cancel();
+
+      final hostEvents = events.where((event) {
+        return event.type == 'wifiServerHost';
+      }).toList();
+      expect(hostEvents, hasLength(1));
+      expect(hostEvents.single.value, 'ailink.iot.aicare.net.cn');
+    },
+  );
+
   test('event stream parses scan results', () async {
     final fakePlatform = MockElinkBlePlatform();
     FlutterElinkBlePlatform.instance = fakePlatform;
@@ -530,14 +923,31 @@ void main() {
       'rssi': -45,
       'advertisementData': {
         'advName': 'Elink',
-        'serviceUuids': ['F0A0'],
-        'manufacturerData': Uint8List.fromList([0x6E, 0x49]),
+        'serviceUuids': ['FFE0'],
+        'manufacturerData': Uint8List.fromList([
+          0x6E,
+          0x49,
+          0x00,
+          0x8F,
+          0x00,
+          0x01,
+          0x00,
+          0x01,
+          0x21,
+          0x3E,
+          0xCF,
+          0xF8,
+          0x6D,
+          0x22,
+        ]),
       },
     });
 
     final results = await nextResult;
     expect(results.single.device.remoteId, 'id-1');
-    expect(results.single.advertisementData.isBroadcastDevice, isTrue);
+    expect(results.single.device.macAddress, '22:6D:F8:CF:3E:21');
+    expect(results.single.advertisementData.identity.cidValue, 0x008F);
+    expect(results.single.advertisementData.isConnectDevice, isTrue);
   });
 
   test(
