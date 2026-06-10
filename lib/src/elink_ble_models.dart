@@ -686,6 +686,39 @@ class ElinkMtuEvent {
   }
 }
 
+/// iOS 当前连接设备的最大写入长度。
+/// Current iOS maximum write lengths for a connected peripheral.
+class ElinkIosMtu {
+  /// 创建 iOS 最大写入长度结果。
+  /// Create an iOS maximum write length result.
+  const ElinkIosMtu({
+    required this.remoteId,
+    required this.maxWriteWithoutResponse,
+    required this.maxWriteWithResponse,
+  });
+
+  final String remoteId;
+
+  /// `.withoutResponse` 单次可写入的最大 payload 长度。
+  /// Maximum payload length for one `.withoutResponse` write.
+  final int maxWriteWithoutResponse;
+
+  /// `.withResponse` 单次可写入的最大 payload 长度。
+  /// Maximum payload length for one `.withResponse` write.
+  final int maxWriteWithResponse;
+
+  /// 从 native map 解析 iOS 最大写入长度。
+  /// Parse iOS maximum write lengths from a native map.
+  factory ElinkIosMtu.fromMap(Map<dynamic, dynamic> map) {
+    return ElinkIosMtu(
+      remoteId: map['remoteId']?.toString() ?? '',
+      maxWriteWithoutResponse:
+          (map['maxWriteWithoutResponse'] as num?)?.toInt() ?? 0,
+      maxWriteWithResponse: (map['maxWriteWithResponse'] as num?)?.toInt() ?? 0,
+    );
+  }
+}
+
 /// Flutter A6 handshake 回调事件。
 /// Flutter A6 handshake callback event.
 class ElinkHandshakeEvent {

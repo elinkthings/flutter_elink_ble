@@ -106,6 +106,22 @@ class MethodChannelFlutterElinkBle extends FlutterElinkBlePlatform {
         false;
   }
 
+  /// 通过 MethodChannel 获取 iOS 最大写入长度。
+  /// Get iOS maximum write lengths through MethodChannel.
+  @override
+  Future<Map<dynamic, dynamic>> getIosMtu(String remoteId) async {
+    final result = await methodChannel.invokeMethod<Map<dynamic, dynamic>>(
+      'getIosMtu',
+      <String, Object?>{'remoteId': remoteId},
+    );
+    return result ??
+        <String, Object?>{
+          'remoteId': remoteId,
+          'maxWriteWithoutResponse': 0,
+          'maxWriteWithResponse': 0,
+        };
+  }
+
   @override
   Future<bool> setAndroidPreferredPhy({
     required String remoteId,

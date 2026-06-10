@@ -16,10 +16,11 @@ void main() {
     expect(find.byIcon(Icons.wifi), findsNothing);
   });
 
-  testWidgets('connection page exposes WiFi provisioning action', (
+  testWidgets('connection page exposes WiFi and MTU actions', (
     WidgetTester tester,
   ) async {
     var opened = false;
+    var mtuRequested = false;
 
     await tester.pumpWidget(
       MaterialApp(
@@ -32,6 +33,8 @@ void main() {
             logs: const <String>[],
             onDisconnect: () {},
             onGetBmVersion: () {},
+            mtuActionLabel: 'Set MTU 517',
+            onMtuAction: () => mtuRequested = true,
             onOpenWifiProvisioning: () => opened = true,
             onEnableTlvParseChanged: (_) {},
           ),
@@ -40,7 +43,9 @@ void main() {
     );
 
     await tester.tap(find.byIcon(Icons.wifi));
+    await tester.tap(find.text('Set MTU 517'));
 
     expect(opened, isTrue);
+    expect(mtuRequested, isTrue);
   });
 }

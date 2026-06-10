@@ -22,6 +22,12 @@ void main() {
               return {'state': 'on'};
             case 'openBluetooth':
               return null;
+            case 'getIosMtu':
+              return {
+                'remoteId': methodCall.arguments['remoteId'],
+                'maxWriteWithoutResponse': 244,
+                'maxWriteWithResponse': 512,
+              };
             case 'decryptBroadcast':
             case 'initHandshake':
             case 'getHandshakeEncryptData':
@@ -78,6 +84,7 @@ void main() {
     await platform.disconnectCurrent();
     await platform.readRssi('remote');
     await platform.setAndroidMtu('remote', 247);
+    final iosMtu = await platform.getIosMtu('remote');
     await platform.setAndroidPreferredPhy(
       remoteId: 'remote',
       txPhy: ElinkAndroidPhy.phy2M.value,
@@ -91,6 +98,7 @@ void main() {
       'disconnectCurrent',
       'readRssi',
       'setAndroidMtu',
+      'getIosMtu',
       'setAndroidPreferredPhy',
     ]);
     expect(calls[0].arguments['remoteId'], 'remote');
@@ -98,8 +106,11 @@ void main() {
     expect(calls[2].arguments['remoteId'], 'remote');
     expect(calls[4].arguments['remoteId'], 'remote');
     expect(calls[5].arguments['mtu'], 247);
-    expect(calls[6].arguments['txPhy'], ElinkAndroidPhy.phy2M.value);
-    expect(calls[6].arguments['rxPhy'], ElinkAndroidPhy.phy1M.value);
+    expect(calls[6].arguments['remoteId'], 'remote');
+    expect(iosMtu['maxWriteWithoutResponse'], 244);
+    expect(iosMtu['maxWriteWithResponse'], 512);
+    expect(calls[7].arguments['txPhy'], ElinkAndroidPhy.phy2M.value);
+    expect(calls[7].arguments['rxPhy'], ElinkAndroidPhy.phy1M.value);
   });
 
   test('writeA6 and writeA7 use method channel contract', () async {

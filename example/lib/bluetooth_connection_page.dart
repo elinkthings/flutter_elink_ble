@@ -12,6 +12,8 @@ class BluetoothConnectionPage extends StatelessWidget {
     required this.logs,
     required this.onDisconnect,
     required this.onGetBmVersion,
+    required this.mtuActionLabel,
+    required this.onMtuAction,
     required this.onOpenWifiProvisioning,
     required this.onEnableTlvParseChanged,
   });
@@ -36,6 +38,13 @@ class BluetoothConnectionPage extends StatelessWidget {
 
   /// Callback for querying BM module version (查询 BM 模块版本的回调).
   final VoidCallback onGetBmVersion;
+
+  /// MTU 操作按钮文案，Android 设置 MTU，iOS 查询最大写入长度。
+  /// MTU action button text; Android sets MTU, iOS reads maximum write length.
+  final String mtuActionLabel;
+
+  /// Callback for running the platform MTU action (执行平台 MTU 操作的回调).
+  final VoidCallback onMtuAction;
 
   /// Callback for opening the WiFi provisioning page (打开 WiFi 配网页面的回调).
   final VoidCallback onOpenWifiProvisioning;
@@ -103,10 +112,21 @@ class BluetoothConnectionPage extends StatelessWidget {
               'BM Version: ${bmVersion ?? "--"}',
               overflow: TextOverflow.ellipsis,
             ),
-            FilledButton.tonalIcon(
-              onPressed: remoteId == null ? null : onGetBmVersion,
-              icon: const Icon(Icons.info_outline),
-              label: const Text('GetBmVersion'),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                FilledButton.tonalIcon(
+                  onPressed: remoteId == null ? null : onGetBmVersion,
+                  icon: const Icon(Icons.info_outline),
+                  label: const Text('GetBmVersion'),
+                ),
+                FilledButton.tonalIcon(
+                  onPressed: remoteId == null ? null : onMtuAction,
+                  icon: const Icon(Icons.swap_vert),
+                  label: Text(mtuActionLabel),
+                ),
+              ],
             ),
           ],
         ),

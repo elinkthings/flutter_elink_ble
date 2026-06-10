@@ -72,6 +72,12 @@ abstract class FlutterElinkBlePlatform extends PlatformInterface {
     throw UnimplementedError('setAndroidMtu() has not been implemented.');
   }
 
+  /// iOS only: 获取当前连接设备的最大写入长度。
+  /// iOS only: get maximum write lengths for the connected peripheral.
+  Future<Map<dynamic, dynamic>> getIosMtu(String remoteId) {
+    throw UnimplementedError('getIosMtu() has not been implemented.');
+  }
+
   Future<bool> setAndroidPreferredPhy({
     required String remoteId,
     required int txPhy,

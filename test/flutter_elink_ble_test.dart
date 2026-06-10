@@ -23,6 +23,7 @@ class MockElinkBlePlatform
   String? lastReadRssiRemoteId;
   String? lastSetMtuRemoteId;
   int? lastSetMtu;
+  String? lastGetIosMtuRemoteId;
   String? lastSetPhyRemoteId;
   int? lastSetTxPhy;
   int? lastSetRxPhy;
@@ -92,6 +93,17 @@ class MockElinkBlePlatform
     lastSetMtuRemoteId = remoteId;
     lastSetMtu = mtu;
     return true;
+  }
+
+  /// 记录 iOS MTU 查询参数并返回模拟最大写入长度。
+  @override
+  Future<Map<dynamic, dynamic>> getIosMtu(String remoteId) async {
+    lastGetIosMtuRemoteId = remoteId;
+    return <String, Object?>{
+      'remoteId': remoteId,
+      'maxWriteWithoutResponse': 244,
+      'maxWriteWithResponse': 512,
+    };
   }
 
   @override
@@ -291,6 +303,7 @@ void main() {
     FlutterElinkBlePlatform.instance = fakePlatform;
 
     final mtuResult = await ElinkBle.setAndroidMtu('remote-1', 247);
+    final iosMtu = await ElinkBle.getIosMtu('remote-1');
     final phyResult = await ElinkBle.setAndroidPreferredPhy(
       'remote-1',
       txPhy: ElinkAndroidPhy.phy2M,
@@ -300,6 +313,10 @@ void main() {
     expect(mtuResult, isTrue);
     expect(fakePlatform.lastSetMtuRemoteId, 'remote-1');
     expect(fakePlatform.lastSetMtu, 247);
+    expect(fakePlatform.lastGetIosMtuRemoteId, 'remote-1');
+    expect(iosMtu.remoteId, 'remote-1');
+    expect(iosMtu.maxWriteWithoutResponse, 244);
+    expect(iosMtu.maxWriteWithResponse, 512);
     expect(phyResult, isTrue);
     expect(fakePlatform.lastSetPhyRemoteId, 'remote-1');
     expect(fakePlatform.lastSetTxPhy, ElinkAndroidPhy.phy2M.value);

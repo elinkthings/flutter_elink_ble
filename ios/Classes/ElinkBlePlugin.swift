@@ -111,6 +111,15 @@ public class ElinkBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
       }
       readRssi(remoteId: remoteId)
       result(nil)
+    case "getIosMtu":
+      guard
+        let args = call.arguments as? [String: Any],
+        let remoteId = args["remoteId"] as? String
+      else {
+        result(FlutterError(code: "bad_args", message: "Missing remoteId", details: nil))
+        return
+      }
+      getIosMtu(remoteId: remoteId, result: result)
     case "setAndroidMtu", "setAndroidPreferredPhy":
       result(
         FlutterError(
@@ -351,6 +360,30 @@ public class ElinkBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
       return
     }
     bleManager.readRSSI()
+  }
+
+  /// 获取 iOS 当前连接外设的最大单次写入 payload 长度。
+  /// Get maximum one-shot write payload lengths for the current iOS peripheral.
+  private func getIosMtu(remoteId: String, result: @escaping FlutterResult) {
+    guard
+      connectedRemoteId == remoteId,
+      connectionReady,
+      let peripheral = bleManager.currentAILinkPeripheral()?.peripheral
+    else {
+      result(
+        FlutterError(
+          code: "device_not_connected",
+          message: "Device is not connected: \(remoteId)",
+          details: nil
+        )
+      )
+      return
+    }
+    result([
+      "remoteId": remoteId,
+      "maxWriteWithoutResponse": peripheral.maximumWriteValueLength(for: .withoutResponse),
+      "maxWriteWithResponse": peripheral.maximumWriteValueLength(for: .withResponse),
+    ])
   }
 
   private func write(data: Data, remoteId: String) {

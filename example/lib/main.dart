@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_elink_ble/flutter_elink_ble.dart';
@@ -37,6 +38,9 @@ class ElinkHomePage extends StatefulWidget {
 
 class _ElinkHomePageState extends State<ElinkHomePage> {
   static const int _maxLogCount = 160;
+
+  /// Android 示例默认请求的 GATT MTU。
+  static const int _defaultAndroidMtu = 517;
 
   final List<StreamSubscription<Object?>> _subscriptions = [];
   final List<String> _logs = <String>[];
@@ -240,6 +244,12 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
       logs: _logs,
       onDisconnect: () => unawaited(_disconnectCurrent()),
       onGetBmVersion: () => unawaited(_getBmVersion()),
+      mtuActionLabel: Platform.isIOS
+          ? 'Get iOS MTU'
+          : Platform.isAndroid
+          ? 'Set MTU 517'
+          : 'MTU',
+      onMtuAction: () => unawaited(_handleMtu()),
       onOpenWifiProvisioning: _openWifiProvisioning,
       onEnableTlvParseChanged: (value) {
         setState(() => _enableTlvParse = value);
@@ -257,6 +267,36 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
       await ElinkBle.connect(device);
     } catch (error) {
       _addLog('[connect] ${device.remoteId}: $error');
+    }
+  }
+
+  /// 根据当前平台处理 MTU：Android 请求 517，iOS 查询最大写入长度。
+  Future<void> _handleMtu({int androidMtu = _defaultAndroidMtu}) async {
+    final remoteId = _connectedRemoteId;
+    if (remoteId == null) {
+      return;
+    }
+    try {
+      if (Platform.isIOS) {
+        final mtu = await ElinkBle.getIosMtu(remoteId);
+        _addLog(
+          '[getIosMtu] $remoteId: '
+          'withoutResponse=${mtu.maxWriteWithoutResponse} '
+          'withResponse=${mtu.maxWriteWithResponse}',
+        );
+        return;
+      }
+      if (!Platform.isAndroid) {
+        _addLog('[mtu] $remoteId: unsupported platform');
+        return;
+      }
+      final requested = await ElinkBle.setAndroidMtu(remoteId, androidMtu);
+      _addLog(
+        '[setAndroidMtu] $remoteId: '
+        'mtu=$androidMtu requested=$requested',
+      );
+    } catch (error) {
+      _addLog('[mtu] $remoteId: $error');
     }
   }
 

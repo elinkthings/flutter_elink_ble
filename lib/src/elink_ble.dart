@@ -329,6 +329,20 @@ class ElinkBle {
     return _platform.setAndroidMtu(remoteId, mtu);
   }
 
+  /// iOS only: 获取当前连接设备的最大写入长度。
+  /// iOS only: get maximum write lengths for the connected peripheral.
+  ///
+  /// iOS 不开放主动设置 MTU 的 API；这里返回的是 CoreBluetooth
+  /// `maximumWriteValueLength(for:)` 针对 `.withoutResponse` 与
+  /// `.withResponse` 的单次最大可写 payload 长度。
+  /// iOS does not expose active MTU requests. This returns CoreBluetooth
+  /// `maximumWriteValueLength(for:)` payload limits for `.withoutResponse`
+  /// and `.withResponse`.
+  static Future<ElinkIosMtu> getIosMtu(String remoteId) async {
+    _ensureListening();
+    return ElinkIosMtu.fromMap(await _platform.getIosMtu(remoteId));
+  }
+
   /// Android only: set preferred PHY. Requires Android 8.0+.
   /// Android only: set preferred PHY. Requires Android 8.0+.
   static Future<bool> setAndroidPreferredPhy(
