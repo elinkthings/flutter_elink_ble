@@ -21,6 +21,7 @@ WiFi provisioning commands are built in Dart and sent through the shared `writeA
 - Receive SDK A6/A7 payload callbacks through `ElinkBle.protocolDataPackets`.
 - Receive passthrough or non-protocol data through `ElinkBle.passthroughDataPackets`.
 - Receive low-level characteristic events through `ElinkBle.characteristicEvents`.
+- Request Android MTU changes and read iOS maximum write lengths.
 - Run WiFi provisioning commands from Dart and listen for typed WiFi events.
 - Use native SDK helpers for broadcast decrypt and MCU A7 encrypt/decrypt; handshake is handled uniformly in the Flutter A6 data layer.
 
@@ -36,7 +37,7 @@ Or add it manually to `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  flutter_elink_ble: ^0.1.0
+  flutter_elink_ble: ^0.1.1
 ```
 
 ## Android Setup
@@ -122,6 +123,48 @@ await ElinkBle.startScan(
 );
 ```
 
+## Example BLE Flow
+
+The example app follows this order for scanning, connecting, handshake, BM
+version, and MTU handling:
+
+```mermaid
+flowchart TD
+  A[Open Bluetooth / refreshAdapterState] --> B[startScan]
+  B --> C[scanResults]
+  C --> D[connect selected device]
+  D --> E[connectionEvents: connected]
+  E --> F[serviceDiscoveryEvents]
+  F --> G{write characteristic ready?}
+  G -- no --> F
+  G -- yes --> H[initHandshake]
+  H --> I[write handshake A6 packet]
+  I --> J[protocolDataPackets]
+  J --> K[handle handshake response]
+  K --> L[handshakeEvents: success]
+  L --> M[getBmVersion]
+  M --> N[writeA6 payload 0x0E]
+  N --> O[bmVersionEvents]
+  L --> P{Platform MTU action}
+  P -- Android --> Q[setAndroidMtu 517]
+  Q --> R[mtuEvents]
+  P -- iOS --> S[getIosMtu]
+  S --> T[withoutResponse / withResponse lengths]
+```
+
+In the example implementation:
+
+- Scan uses `ElinkBle.startScan()` and `ElinkBle.scanResults`.
+- Connection readiness is tracked by `ElinkBle.connectionEvents` and
+  `ElinkBle.serviceDiscoveryEvents`.
+- Handshake starts after a writable characteristic is discovered.
+- BM version is queried with `ElinkBle.getBmVersion()`, which sends A6 payload
+  `0x0E`.
+- Android uses `ElinkBle.setAndroidMtu(remoteId, 517)` and listens to
+  `ElinkBle.mtuEvents`.
+- iOS uses `ElinkBle.getIosMtu(remoteId)` and reads the negotiated
+  `.withoutResponse` and `.withResponse` maximum write lengths.
+
 Connect and write:
 
 ```dart
@@ -138,7 +181,18 @@ await ElinkBle.write(
 
 await ElinkBle.readRssi(result.device.remoteId);
 
+// Android only: request GATT MTU. Result is emitted by ElinkBle.mtuEvents.
 await ElinkBle.setAndroidMtu(result.device.remoteId, 247);
+
+// iOS only: read CoreBluetooth maximum write lengths for the active connection.
+final iosMtu = await ElinkBle.getIosMtu(result.device.remoteId);
+print(
+  'iOS write lengths: '
+  'withoutResponse=${iosMtu.maxWriteWithoutResponse} '
+  'withResponse=${iosMtu.maxWriteWithResponse}',
+);
+
+// Android only: set preferred PHY.
 await ElinkBle.setAndroidPreferredPhy(
   result.device.remoteId,
   txPhy: ElinkAndroidPhy.phy2M,

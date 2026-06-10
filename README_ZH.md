@@ -13,6 +13,7 @@ ElinkThings BLE SDK 的 Flutter 插件。用于监听 Bluetooth adapter state、
 - 接收透传/非协议数据：`ElinkBle.passthroughDataPackets`
 - 接收底层 characteristic 操作事件：`ElinkBle.characteristicEvents`
 - 解析 Elink manufacturer data 中的 `CID`、`VID`、`PID`、`MAC`
+- Android 可请求 MTU，iOS 可查询当前连接的最大写入长度
 - 在 Dart 层统一构造 WiFi A6 配网指令，并通过 `writeA6` 下发
 - 解析 WiFi 扫描、状态、响应、MAC、SSID、密码、SN 与服务端配置事件
 - 支持 WiFi 指令日志开关，默认关闭
@@ -30,7 +31,7 @@ flutter pub add flutter_elink_ble
 
 ```yaml
 dependencies:
-  flutter_elink_ble: ^0.1.0
+  flutter_elink_ble: ^0.1.1
 ```
 
 ## Android 配置
@@ -119,6 +120,47 @@ await ElinkBle.startScan(
 );
 ```
 
+## 示例 BLE 流程
+
+example app 中扫描、连接、握手、版本号和 MTU 的主流程如下：
+
+```mermaid
+flowchart TD
+  A[打开蓝牙 / refreshAdapterState] --> B[startScan]
+  B --> C[scanResults]
+  C --> D[连接选中的设备]
+  D --> E[connectionEvents: connected]
+  E --> F[serviceDiscoveryEvents]
+  F --> G{发现可写 characteristic?}
+  G -- 否 --> F
+  G -- 是 --> H[initHandshake]
+  H --> I[写入 handshake A6 packet]
+  I --> J[protocolDataPackets]
+  J --> K[处理 handshake response]
+  K --> L[handshakeEvents: success]
+  L --> M[getBmVersion]
+  M --> N[writeA6 payload 0x0E]
+  N --> O[bmVersionEvents]
+  L --> P{平台 MTU 操作}
+  P -- Android --> Q[setAndroidMtu 517]
+  Q --> R[mtuEvents]
+  P -- iOS --> S[getIosMtu]
+  S --> T[withoutResponse / withResponse 最大写入长度]
+```
+
+对应 example 实现：
+
+- 扫描使用 `ElinkBle.startScan()` 和 `ElinkBle.scanResults`。
+- 连接可用状态由 `ElinkBle.connectionEvents` 和
+  `ElinkBle.serviceDiscoveryEvents` 共同判断。
+- 发现可写 characteristic 后触发 Flutter A6 handshake。
+- BM 版本号通过 `ElinkBle.getBmVersion()` 查询，本质是发送 A6 payload
+  `0x0E`。
+- Android 使用 `ElinkBle.setAndroidMtu(remoteId, 517)`，结果从
+  `ElinkBle.mtuEvents` 返回。
+- iOS 使用 `ElinkBle.getIosMtu(remoteId)`，读取系统当前协商出的
+  `.withoutResponse` 和 `.withResponse` 最大写入长度。
+
 连接并写入数据：
 
 ```dart
@@ -143,9 +185,21 @@ await ElinkBle.write(
 // Read RSSI for a connected device; result is emitted by ElinkBle.rssiEvents.
 await ElinkBle.readRssi(result.device.remoteId);
 
-// Android only：设置 MTU 和 PHY；iOS 不支持主动设置 MTU/PHY。
-// Android only: set MTU and PHY; iOS does not support active MTU/PHY requests.
+// Android only：请求 GATT MTU，结果从 ElinkBle.mtuEvents 返回。
+// Android only: request GATT MTU. Result is emitted by ElinkBle.mtuEvents.
 await ElinkBle.setAndroidMtu(result.device.remoteId, 247);
+
+// iOS only：查询当前连接下 CoreBluetooth 最大写入长度。
+// iOS only: read CoreBluetooth maximum write lengths for the active connection.
+final iosMtu = await ElinkBle.getIosMtu(result.device.remoteId);
+print(
+  'iOS write lengths: '
+  'withoutResponse=${iosMtu.maxWriteWithoutResponse} '
+  'withResponse=${iosMtu.maxWriteWithResponse}',
+);
+
+// Android only：设置 preferred PHY。
+// Android only: set preferred PHY.
 await ElinkBle.setAndroidPreferredPhy(
   result.device.remoteId,
   txPhy: ElinkAndroidPhy.phy2M,

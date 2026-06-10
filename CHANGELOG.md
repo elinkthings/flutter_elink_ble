@@ -1,3 +1,13 @@
+## 0.1.1
+
+* Added iOS maximum write length query support via `ElinkBle.getIosMtu()`.
+  It reports CoreBluetooth `.withoutResponse` and `.withResponse` payload
+  limits for the active connection.
+* Updated the example connection page so Android requests MTU 517 while iOS
+  reads the negotiated maximum write lengths.
+* Documented the example BLE flow for scan, connect, handshake, BM version, and
+  MTU handling.
+
 ## 0.1.0
 
 * Added Dart-side WiFi provisioning support that builds A6 WiFi commands through
