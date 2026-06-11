@@ -33,6 +33,7 @@ class MockElinkBlePlatform
   String? lastWriteA6RemoteId;
   Uint8List lastWriteA6Payload = Uint8List(0);
   final List<Uint8List> writeA6Payloads = <Uint8List>[];
+  bool autoAckWifiCommands = false;
   String? lastWriteA7RemoteId;
   Uint8List lastWriteA7Payload = Uint8List(0);
   int? lastWriteA7Cid;
@@ -137,6 +138,28 @@ class MockElinkBlePlatform
     lastWriteA6RemoteId = remoteId;
     lastWriteA6Payload = payload;
     writeA6Payloads.add(payload);
+    if (autoAckWifiCommands) {
+      _emitWifiAck(remoteId, payload);
+    }
+  }
+
+  /// 模拟 WiFi 配网类命令的成功 ACK 回包。
+  void _emitWifiAck(String remoteId, Uint8List payload) {
+    if (payload.isEmpty) {
+      return;
+    }
+    final command = payload.first;
+    if (!<int>{0x84, 0x86, 0x88, 0x8B, 0x8D, 0x96}.contains(command)) {
+      return;
+    }
+    scheduleMicrotask(() {
+      eventController.add(<String, Object?>{
+        'type': 'wifiResponse',
+        'remoteId': remoteId,
+        'command': command,
+        'status': ElinkWifiCommandStatus.success.value,
+      });
+    });
   }
 
   @override
@@ -585,6 +608,7 @@ void main() {
 
   test('WiFi APIs build A6 command payloads in Dart', () async {
     final fakePlatform = MockElinkBlePlatform();
+    fakePlatform.autoAckWifiCommands = true;
     FlutterElinkBlePlatform.instance = fakePlatform;
 
     await ElinkBle.wifiConfigureAndConnect(
@@ -621,6 +645,132 @@ void main() {
       ],
       [0x8D, 0x07, 0x5B],
       [0x96, 0x00, 0x2F, 0x6D, 0x71, 0x74, 0x74],
+    ]);
+  });
+
+  test('wifiConfigureAndConnect waits for each command response', () async {
+    final fakePlatform = MockElinkBlePlatform();
+    FlutterElinkBlePlatform.instance = fakePlatform;
+
+    final configureFuture = ElinkBle.wifiConfigureAndConnect(
+      'remote-1',
+      macAddress: 'AA:BB:CC:DD:EE:FF',
+      password: '12345678',
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(fakePlatform.writeA6Payloads.map((payload) => payload.toList()), [
+      [0x84, 0xFF, 0xEE, 0xDD, 0xCC, 0xBB, 0xAA],
+    ]);
+
+    fakePlatform.eventController.add({
+      'type': 'wifiResponse',
+      'remoteId': 'remote-1',
+      'command': 0x84,
+      'status': ElinkWifiCommandStatus.success.value,
+    });
+    await Future<void>.delayed(Duration.zero);
+
+    expect(fakePlatform.writeA6Payloads.map((payload) => payload.toList()), [
+      [0x84, 0xFF, 0xEE, 0xDD, 0xCC, 0xBB, 0xAA],
+      [0x86, 0x00, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38],
+    ]);
+
+    fakePlatform.eventController.add({
+      'type': 'wifiResponse',
+      'remoteId': 'remote-1',
+      'command': 0x86,
+      'status': ElinkWifiCommandStatus.success.value,
+    });
+    await Future<void>.delayed(Duration.zero);
+
+    expect(fakePlatform.writeA6Payloads.map((payload) => payload.toList()), [
+      [0x84, 0xFF, 0xEE, 0xDD, 0xCC, 0xBB, 0xAA],
+      [0x86, 0x00, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38],
+      [0x88, 0x01],
+    ]);
+
+    fakePlatform.eventController.add({
+      'type': 'wifiResponse',
+      'remoteId': 'remote-1',
+      'command': 0x88,
+      'status': ElinkWifiCommandStatus.success.value,
+    });
+    await configureFuture;
+  });
+
+  test('wifiSetServerInfo sends empty path payload', () async {
+    final fakePlatform = MockElinkBlePlatform();
+    fakePlatform.autoAckWifiCommands = true;
+    FlutterElinkBlePlatform.instance = fakePlatform;
+
+    await ElinkBle.wifiSetServerInfo(
+      'remote-1',
+      host: 'example.com',
+      port: 80,
+      path: '',
+    );
+
+    expect(fakePlatform.writeA6Payloads.map((payload) => payload.toList()), [
+      [
+        0x8B,
+        0x00,
+        0x65,
+        0x78,
+        0x61,
+        0x6D,
+        0x70,
+        0x6C,
+        0x65,
+        0x2E,
+        0x63,
+        0x6F,
+        0x6D,
+      ],
+      [0x8D, 0x00, 0x50],
+      [0x96, 0x00, 0x00],
+    ]);
+  });
+
+  test('wifiConfigureServerAndConnect sends server info before WiFi', () async {
+    final fakePlatform = MockElinkBlePlatform();
+    fakePlatform.autoAckWifiCommands = true;
+    FlutterElinkBlePlatform.instance = fakePlatform;
+
+    await ElinkBle.wifiConfigureServerAndConnect(
+      'remote-1',
+      host: 'ailink.iot.aicare.net.cn',
+      port: 80,
+      path: '',
+      macAddress: 'AA:BB:CC:DD:EE:FF',
+      password: '12345678',
+    );
+
+    expect(fakePlatform.writeA6Payloads.map((payload) => payload.toList()), [
+      [
+        0x8B,
+        0x01,
+        0x61,
+        0x69,
+        0x6C,
+        0x69,
+        0x6E,
+        0x6B,
+        0x2E,
+        0x69,
+        0x6F,
+        0x74,
+        0x2E,
+        0x61,
+        0x69,
+        0x63,
+      ],
+      [0x8B, 0x00, 0x61, 0x72, 0x65, 0x2E, 0x6E, 0x65, 0x74, 0x2E, 0x63, 0x6E],
+      [0x8D, 0x00, 0x50],
+      [0x96, 0x00, 0x00],
+      [0x84, 0xFF, 0xEE, 0xDD, 0xCC, 0xBB, 0xAA],
+      [0x86, 0x00, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38],
+      [0x88, 0x01],
     ]);
   });
 
@@ -664,6 +814,7 @@ void main() {
     'ElinkWifi APIs and protocol events work without ElinkBle facade',
     () async {
       final fakePlatform = MockElinkBlePlatform();
+      fakePlatform.autoAckWifiCommands = true;
       FlutterElinkBlePlatform.instance = fakePlatform;
       final nextStatus = ElinkWifi.statusEvents.first;
 

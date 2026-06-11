@@ -37,7 +37,7 @@ Or add it manually to `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  flutter_elink_ble: ^0.1.1
+  flutter_elink_ble: ^0.1.2
 ```
 
 ## Android Setup
@@ -207,6 +207,8 @@ await ElinkBle.disconnectCurrent();
 
 WiFi APIs are implemented in Dart. The plugin builds A6 payloads using one shared command builder and sends them through the native SDK `writeA6` bridge. Command logs are disabled by default and can be enabled with `ElinkBle.wifiCommandLoggingEnabled`.
 
+For devices that must register with the server before provisioning is considered successful, use `wifiConfigureServerAndConnect`; it writes server host, port, and path before sending the WiFi MAC, password, and connect command.
+
 ```dart
 final wifiEventsSub = ElinkBle.wifiEvents.listen((event) {
   print('${event.type} ${event.remoteId} ${event.value}');
@@ -235,8 +237,11 @@ ElinkBle.wifiCommandLoggingEnabled = true;
 await ElinkBle.wifiGetCurrentState(result.device.remoteId);
 await ElinkBle.wifiScan(result.device.remoteId);
 
-await ElinkBle.wifiConfigureAndConnect(
+await ElinkBle.wifiConfigureServerAndConnect(
   result.device.remoteId,
+  host: 'ailink.iot.aicare.net.cn',
+  port: 80,
+  path: '',
   macAddress: 'AA:BB:CC:DD:EE:FF',
   password: '12345678',
 );
@@ -246,12 +251,6 @@ await ElinkBle.wifiGetConnectedMac(result.device.remoteId);
 await ElinkBle.wifiGetConnectedPassword(result.device.remoteId);
 await ElinkBle.wifiGetDeviceSn(result.device.remoteId);
 
-await ElinkBle.wifiSetServerInfo(
-  result.device.remoteId,
-  host: 'ailink.iot.aicare.net.cn',
-  port: 1883,
-  path: '',
-);
 await ElinkBle.wifiGetServerInfo(result.device.remoteId);
 ```
 

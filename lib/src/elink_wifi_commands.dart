@@ -41,10 +41,15 @@ class ElinkWifiCommandBuilder {
     required String password,
   }) {
     return [
-      _packet('setConnectWifiMac', _macPayload(macAddress)),
+      setConnectWifiMac(macAddress),
       ...setPassword(password),
       ...connect(),
     ];
+  }
+
+  /// Build the command for setting the target WiFi MAC (构造设置目标 WiFi MAC 的指令).
+  static ElinkWifiCommandPacket setConnectWifiMac(String macAddress) {
+    return _packet('setConnectWifiMac', _macPayload(macAddress));
   }
 
   /// Build commands for setting the WiFi password (构造设置 WiFi 密码的指令序列).
@@ -127,10 +132,25 @@ class ElinkWifiCommandBuilder {
     required String path,
   }) {
     return [
-      ..._textPackets('setServerHost', 0x8B, host),
-      _packet('setServerPort', _portPayload(port)),
-      ..._textPackets('setServerPath', 0x96, path),
+      ...setServerHost(host),
+      setServerPort(port),
+      ...setServerPath(path),
     ];
+  }
+
+  /// Build commands for setting the server host (构造设置服务端 host 的指令序列).
+  static List<ElinkWifiCommandPacket> setServerHost(String host) {
+    return _textPackets('setServerHost', 0x8B, host, emptyAsNulByte: true);
+  }
+
+  /// Build the command for setting the server port (构造设置服务端 port 的指令).
+  static ElinkWifiCommandPacket setServerPort(int port) {
+    return _packet('setServerPort', _portPayload(port));
+  }
+
+  /// Build commands for setting the server path (构造设置服务端 path 的指令序列).
+  static List<ElinkWifiCommandPacket> setServerPath(String path) {
+    return _textPackets('setServerPath', 0x96, path, emptyAsNulByte: true);
   }
 
   /// Build the command for restarting the WiFi/BLE module (构造请求 WiFi/BLE 模块重启的指令).
@@ -159,9 +179,12 @@ class ElinkWifiCommandBuilder {
   static List<ElinkWifiCommandPacket> _textPackets(
     String name,
     int command,
-    String text,
-  ) {
-    final bytes = utf8.encode(text);
+    String text, {
+    bool emptyAsNulByte = false,
+  }) {
+    final bytes = text.isEmpty && emptyAsNulByte
+        ? <int>[0x00]
+        : utf8.encode(text);
     if (bytes.length > _textMaxChunks * _textChunkSize) {
       throw RangeError.range(
         bytes.length,

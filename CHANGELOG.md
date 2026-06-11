@@ -1,3 +1,15 @@
+## 0.1.2
+
+* Added `wifiConfigureServerAndConnect` for the server-first WiFi provisioning
+  flow: write server host, port, and path before WiFi MAC, password, and
+  connect commands.
+* Updated WiFi command sequencing to wait for command responses before sending
+  the next provisioning step.
+* Fixed empty server path payloads and exposed reusable server command builders.
+* Updated the example WiFi provisioning page with default production server
+  settings and removed the standalone Set Password action.
+* Updated README examples to recommend the server-first WiFi provisioning flow.
+
 ## 0.1.1
 
 * Added iOS maximum write length query support via `ElinkBle.getIosMtu()`.

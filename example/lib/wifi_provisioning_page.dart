@@ -29,6 +29,9 @@ class WifiProvisioningPage extends StatefulWidget {
 class _WifiProvisioningPageState extends State<WifiProvisioningPage> {
   static const int _maxLogCount = 120;
   static const Duration _duplicateLogWindow = Duration(milliseconds: 500);
+  static const String _defaultServerHost = 'ailink.iot.aicare.net.cn';
+  static const int _defaultServerPort = 80;
+  static const String _defaultServerPath = '';
 
   final List<StreamSubscription<dynamic>> _subscriptions =
       <StreamSubscription<dynamic>>[];
@@ -52,6 +55,9 @@ class _WifiProvisioningPageState extends State<WifiProvisioningPage> {
   void initState() {
     super.initState();
     _remoteIdController.text = widget.initialRemoteId ?? '';
+    _hostController.text = _defaultServerHost;
+    _portController.text = _defaultServerPort.toString();
+    _pathController.text = _defaultServerPath;
     ElinkWifi.commandLoggingEnabled = _commandLogsEnabled;
     _subscriptions
       ..add(
@@ -318,11 +324,6 @@ class _WifiProvisioningPageState extends State<WifiProvisioningPage> {
               label: 'Configure & Connect',
               onPressed: _configureAndConnect,
               filled: true,
-            ),
-            _buildCommandButton(
-              icon: Icons.password,
-              label: 'Set Password',
-              onPressed: _setPassword,
             ),
             _buildCommandButton(
               icon: Icons.wifi,
@@ -593,22 +594,27 @@ class _WifiProvisioningPageState extends State<WifiProvisioningPage> {
       _addLog('[configureAndConnect] selected access point has no MAC');
       return;
     }
+    final host = _hostController.text.trim();
+    final port = int.tryParse(_portController.text.trim());
+    final path = _pathController.text.trim();
+    if (host.isEmpty) {
+      _addLog('[configureAndConnect] host is required');
+      return;
+    }
+    if (port == null || port < 0 || port > 65535) {
+      _addLog('[configureAndConnect] port must be 0..65535');
+      return;
+    }
     await _runWifiCommand(
       'configureAndConnect',
-      (remoteId) => ElinkWifi.configureAndConnect(
+      (remoteId) => ElinkWifi.configureServerAndConnect(
         remoteId,
+        host: host,
+        port: port,
+        path: path,
         macAddress: macAddress,
         password: _passwordController.text,
       ),
-    );
-  }
-
-  /// Set the saved WiFi password on the module (设置模块保存的 WiFi 密码).
-  Future<void> _setPassword() {
-    return _runWifiCommand(
-      'setPassword',
-      (remoteId) =>
-          ElinkWifi.setPassword(remoteId, password: _passwordController.text),
     );
   }
 

@@ -44,6 +44,7 @@ class ElinkWifi {
   static const Duration _nativeEventDuplicateWindow = Duration(
     milliseconds: 300,
   );
+  static const Duration _commandAckTimeout = Duration(seconds: 6);
 
   /// Whether Dart should emit WiFi command debug logs; disabled by default (是否输出 WiFi 指令调试日志，默认关闭).
   static bool commandLoggingEnabled = false;
@@ -106,14 +107,54 @@ class ElinkWifi {
     String remoteId, {
     required String macAddress,
     required String password,
-  }) {
+  }) async {
     _ensureListening();
-    return _writeWifiCommands(
+    await _writeWifiCommandGroup(
       remoteId,
-      ElinkWifiCommandBuilder.configureAndConnect(
-        macAddress: macAddress,
-        password: password,
-      ),
+      command: 0x84,
+      commands: <ElinkWifiCommandPacket>[
+        ElinkWifiCommandBuilder.setConnectWifiMac(macAddress),
+      ],
+    );
+    await _writeWifiCommandGroup(
+      remoteId,
+      command: 0x86,
+      commands: ElinkWifiCommandBuilder.setPassword(password),
+    );
+    await _writeWifiCommandGroup(
+      remoteId,
+      command: 0x88,
+      commands: ElinkWifiCommandBuilder.connect(),
+    );
+  }
+
+  /// 先设置 WiFi 模块服务端信息，再配置目标 WiFi 并请求连接。
+  ///
+  /// [remoteId] is the native remote identifier of the connected BLE device (已连接 BLE 设备的 native remote identifier).
+  ///
+  /// [host] is the server domain, IP, or URL host (服务端域名、IP 或 URL host).
+  ///
+  /// [port] is the server port (服务端端口号).
+  ///
+  /// [path] is the server path; leave it empty when unused (服务端路径；无路径时可留空).
+  ///
+  /// [macAddress] is the WiFi BSSID/MAC from scan results (扫描结果中的 WiFi BSSID/MAC).
+  ///
+  /// [password] is the target WiFi password; pass an empty string for open networks (目标 WiFi 密码；开放网络可传空字符串).
+  static Future<void> configureServerAndConnect(
+    String remoteId, {
+    required String host,
+    required int port,
+    String path = '',
+    required String macAddress,
+    required String password,
+  }) async {
+    _ensureListening();
+    await setServerInfo(remoteId, host: host, port: port, path: path);
+    await configureAndConnect(
+      remoteId,
+      macAddress: macAddress,
+      password: password,
     );
   }
 
@@ -245,11 +286,24 @@ class ElinkWifi {
     required String host,
     required int port,
     String path = '',
-  }) {
+  }) async {
     _ensureListening();
-    return _writeWifiCommands(
+    await _writeWifiCommandGroup(
       remoteId,
-      ElinkWifiCommandBuilder.setServerInfo(host: host, port: port, path: path),
+      command: 0x8B,
+      commands: ElinkWifiCommandBuilder.setServerHost(host),
+    );
+    await _writeWifiCommandGroup(
+      remoteId,
+      command: 0x8D,
+      commands: <ElinkWifiCommandPacket>[
+        ElinkWifiCommandBuilder.setServerPort(port),
+      ],
+    );
+    await _writeWifiCommandGroup(
+      remoteId,
+      command: 0x96,
+      commands: ElinkWifiCommandBuilder.setServerPath(path),
     );
   }
 
@@ -329,7 +383,7 @@ class ElinkWifi {
     }
   }
 
-  /// 判断 native WiFi 事件是否为短时间内重复回调。
+  /// 判断 WiFi 事件是否为短时间内重复回调。
   ///
   /// [event] is the native event map to check (待检查的 native event map).
   static bool _isDuplicateNativeEvent(Map<dynamic, dynamic> event) {
@@ -390,6 +444,51 @@ class ElinkWifi {
       _emitWifiCommand(remoteId, command);
       await _platform.writeA6(remoteId: remoteId, payload: command.payload);
     }
+  }
+
+  /// 按命令类型下发 WiFi 指令组，并等待设备成功回包后再返回。
+  ///
+  /// [remoteId] is the native remote identifier for the target device (目标设备的 native remote identifier).
+  ///
+  /// [command] is the WiFi command byte expected in the response (等待回包的 WiFi 命令字节).
+  ///
+  /// [commands] is the payload sequence for the same command type (同一命令类型的 payload 序列).
+  static Future<void> _writeWifiCommandGroup(
+    String remoteId, {
+    required int command,
+    required List<ElinkWifiCommandPacket> commands,
+  }) async {
+    final ackFuture = responseEvents
+        .firstWhere((event) {
+          return _isRemoteIdMatch(event.remoteId, remoteId) &&
+              event.command == command;
+        })
+        .timeout(_commandAckTimeout);
+    try {
+      for (final packet in commands) {
+        _emitWifiCommand(remoteId, packet);
+        await _platform.writeA6(remoteId: remoteId, payload: packet.payload);
+      }
+      final ack = await ackFuture;
+      if (ack.status != ElinkWifiCommandStatus.success) {
+        throw StateError(
+          'WiFi command 0x${command.toRadixString(16)} failed: '
+          '${ack.status.name}',
+        );
+      }
+    } catch (_) {
+      unawaited(ackFuture.then<void>((_) {}, onError: (_) {}));
+      rethrow;
+    }
+  }
+
+  /// 判断 WiFi 回包 remoteId 是否属于当前目标设备。
+  ///
+  /// [eventRemoteId] is the remoteId carried by the response event (回包携带的 remoteId).
+  ///
+  /// [targetRemoteId] is the remoteId of the command target (命令目标 remoteId).
+  static bool _isRemoteIdMatch(String eventRemoteId, String targetRemoteId) {
+    return eventRemoteId.isEmpty || eventRemoteId == targetRemoteId;
   }
 
   /// 发送 WiFi 指令日志事件。

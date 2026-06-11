@@ -31,7 +31,7 @@ flutter pub add flutter_elink_ble
 
 ```yaml
 dependencies:
-  flutter_elink_ble: ^0.1.1
+  flutter_elink_ble: ^0.1.2
 ```
 
 ## Android 配置
@@ -214,6 +214,10 @@ await ElinkBle.disconnectCurrent();
 
 WiFi 配网：
 
+需要以服务端注册/SN 获取作为配网成功条件的设备，建议使用
+`wifiConfigureServerAndConnect`。该方法会先下发服务端 host、port、path，
+再下发 WiFi MAC、密码和连接命令。
+
 ```dart
 final wifiScanSub = ElinkBle.wifiScanResults.listen((accessPoints) {
   for (final accessPoint in accessPoints) {
@@ -229,18 +233,33 @@ final wifiStatusSub = ElinkBle.wifiStatusEvents.listen((status) {
   );
 });
 
+final wifiResponseSub = ElinkBle.wifiResponseEvents.listen((response) {
+  print('command=${response.command} status=${response.status.name}');
+});
+
 ElinkBle.wifiCommandLoggingEnabled = true;
 
 await ElinkBle.wifiGetCurrentState(result.device.remoteId);
 await ElinkBle.wifiScan(result.device.remoteId);
-await ElinkBle.wifiConfigureAndConnect(
+await ElinkBle.wifiConfigureServerAndConnect(
   result.device.remoteId,
+  host: 'ailink.iot.aicare.net.cn',
+  port: 80,
+  path: '',
   macAddress: 'AA:BB:CC:DD:EE:FF',
   password: '12345678',
 );
 
+await ElinkBle.wifiGetConnectedSsid(result.device.remoteId);
+await ElinkBle.wifiGetConnectedMac(result.device.remoteId);
+await ElinkBle.wifiGetConnectedPassword(result.device.remoteId);
+await ElinkBle.wifiGetDeviceSn(result.device.remoteId);
+
+await ElinkBle.wifiGetServerInfo(result.device.remoteId);
+
 await wifiScanSub.cancel();
 await wifiStatusSub.cancel();
+await wifiResponseSub.cancel();
 ElinkBle.wifiCommandLoggingEnabled = false;
 ```
 

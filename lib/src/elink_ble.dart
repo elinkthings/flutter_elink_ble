@@ -448,6 +448,37 @@ class ElinkBle {
     );
   }
 
+  /// Set server info first, then configure target WiFi and ask the module to connect (先设置服务端信息，再设置目标 WiFi 并请求模块连接).
+  ///
+  /// [remoteId] is the native remote identifier of the connected BLE device (已连接 BLE 设备的 native remote identifier).
+  ///
+  /// [host] is the server domain, IP, or URL host (服务端域名、IP 或 URL host).
+  ///
+  /// [port] is the server port (服务端端口号).
+  ///
+  /// [path] is the server path; leave it empty when unused (服务端路径；无路径时可留空).
+  ///
+  /// [macAddress] is the WiFi BSSID/MAC from scan results (扫描结果中的 WiFi BSSID/MAC).
+  ///
+  /// [password] is the target WiFi password; pass an empty string for open networks (目标 WiFi 密码；开放网络可传空字符串).
+  static Future<void> wifiConfigureServerAndConnect(
+    String remoteId, {
+    required String host,
+    required int port,
+    String path = '',
+    required String macAddress,
+    required String password,
+  }) {
+    return ElinkWifi.configureServerAndConnect(
+      remoteId,
+      host: host,
+      port: port,
+      path: path,
+      macAddress: macAddress,
+      password: password,
+    );
+  }
+
   /// Set WiFi password (设置 WiFi 密码).
   ///
   /// [remoteId] is the native remote identifier of the connected BLE device (已连接 BLE 设备的 native remote identifier).
