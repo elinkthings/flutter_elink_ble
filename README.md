@@ -132,24 +132,25 @@ version, and MTU handling:
 flowchart TD
   A[Open Bluetooth / refreshAdapterState] --> B[startScan]
   B --> C[scanResults]
-  C --> D[connect selected device]
-  D --> E[connectionEvents: connected]
-  E --> F[serviceDiscoveryEvents]
-  F --> G{write characteristic ready?}
-  G -- no --> F
-  G -- yes --> H[initHandshake]
-  H --> I[write handshake A6 packet]
-  I --> J[protocolDataPackets]
-  J --> K[handle handshake response]
-  K --> L[handshakeEvents: success]
-  L --> M[getBmVersion]
-  M --> N[writeA6 payload 0x0E]
-  N --> O[bmVersionEvents]
-  L --> P{Platform MTU action}
-  P -- Android --> Q[setAndroidMtu 517]
-  Q --> R[mtuEvents]
-  P -- iOS --> S[getIosMtu]
-  S --> T[withoutResponse / withResponse lengths]
+  C --> D[stopScan for single-device flow]
+  D --> E[connect selected device]
+  E --> F[connectionEvents: connected]
+  F --> G[serviceDiscoveryEvents]
+  G --> H{write characteristic ready?}
+  H -- no --> G
+  H -- yes --> I[initHandshake]
+  I --> J[write handshake A6 packet]
+  J --> K[protocolDataPackets]
+  K --> L[handle handshake response]
+  L --> M[handshakeEvents: success]
+  M --> N[getBmVersion]
+  N --> O[writeA6 payload 0x0E]
+  O --> P[bmVersionEvents]
+  M --> Q{Platform MTU action}
+  Q -- Android --> R[setAndroidMtu 517]
+  R --> S[mtuEvents]
+  Q -- iOS --> T[getIosMtu]
+  T --> U[withoutResponse / withResponse lengths]
 ```
 
 In the example implementation:
@@ -157,6 +158,9 @@ In the example implementation:
 - Scan uses `ElinkBle.startScan()` and `ElinkBle.scanResults`.
 - Connection readiness is tracked by `ElinkBle.connectionEvents` and
   `ElinkBle.serviceDiscoveryEvents`.
+- `ElinkBle.connect()` does not stop active scanning. The example is a
+  single-device flow, so it calls `ElinkBle.stopScan()` before connecting.
+  Multi-device business flows can keep scanning while connecting devices.
 - Handshake starts after a writable characteristic is discovered.
 - BM version is queried with `ElinkBle.getBmVersion()`, which sends A6 payload
   `0x0E`.
@@ -168,6 +172,7 @@ In the example implementation:
 Connect and write:
 
 ```dart
+await ElinkBle.stopScan(); // Single-device business flow: stop discovery first.
 await ElinkBle.connect(result.device);
 
 await ElinkBle.writeA6(result.device.remoteId, [0x01, 0x02]);

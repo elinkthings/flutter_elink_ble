@@ -1,3 +1,12 @@
+## 0.1.3
+
+* Changed native `connect` behavior so Android and iOS no longer stop active
+  BLE scanning from inside the plugin.
+* Updated the example app's single-device flow to call `ElinkBle.stopScan()`
+  before connecting the selected device.
+* Documented that scan lifecycle ownership belongs to the business layer, so
+  multi-device workflows can keep scanning while connecting devices.
+
 ## 0.1.2
 
 * Added `wifiConfigureServerAndConnect` for the server-first WiFi provisioning

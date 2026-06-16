@@ -258,12 +258,15 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
     );
   }
 
-  /// Connect one scanned BLE device and log failures (连接单个已扫描 BLE 设备并记录失败).
+  /// Connect one BLE device after stopping this example scan, and log failures (停止示例页扫描后连接单个 BLE 设备，并记录失败).
   Future<void> _connect(ElinkDevice device) async {
     try {
       _connectedMacAddress = device.macAddress.isEmpty
           ? null
           : device.macAddress;
+      if (_isScanning) {
+        await ElinkBle.stopScan();
+      }
       await ElinkBle.connect(device);
     } catch (error) {
       _addLog('[connect] ${device.remoteId}: $error');

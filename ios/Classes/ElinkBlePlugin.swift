@@ -333,7 +333,6 @@ public class ElinkBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
       emitError(code: "device_not_found", message: "Device not found: \(remoteId)")
       return
     }
-    stopScan()
     connectedRemoteId = remoteId
     connectionReady = false
     handshakeSeed = nil

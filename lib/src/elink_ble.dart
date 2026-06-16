@@ -286,8 +286,11 @@ class ElinkBle {
     _setScanning(false);
   }
 
-  /// 连接一个扫描到的设备。
-  /// Connect a scanned BLE peripheral.
+  /// Connect a scanned BLE peripheral (连接一个扫描到的设备).
+  ///
+  /// Connecting does not stop active scanning; the business layer decides
+  /// whether to call [stopScan] (连接不会自动停止当前扫描；是否停扫由业务层决定).
+  /// This keeps multi-device workflows possible (便于同时发现并连接多个设备).
   static Future<void> connect(
     ElinkDevice device, {
     Duration timeout = const Duration(seconds: 15),

@@ -398,7 +398,6 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
         }
         ensureBluetoothPoweredOn()
         emitConnection(remoteId, "connecting")
-        stopScanInternal()
         val bleValue = scanResults[remoteId]
         if (bleValue != null && !autoConnect) {
             AILinkBleManager.getInstance().connectDevice(bleValue)
