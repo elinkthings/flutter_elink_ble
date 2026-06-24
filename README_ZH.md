@@ -8,12 +8,13 @@ ElinkThings BLE SDK 的 Flutter 插件。用于监听 Bluetooth adapter state、
 
 - 监听蓝牙状态：`ElinkBle.bluetoothState`、`ElinkBle.setBluetoothStateCallback`
 - 扫描 Elink 广播设备与可连接设备
-- 连接、断开、写入 BLE 数据
+- 支持连接多个 BLE 设备，按 `remoteId` 断开和写入 BLE 数据
 - 接收 SDK A6/A7 payload：`ElinkBle.protocolDataPackets`
 - 接收透传/非协议数据：`ElinkBle.passthroughDataPackets`
 - 接收底层 characteristic 操作事件：`ElinkBle.characteristicEvents`
 - 解析 Elink manufacturer data 中的 `CID`、`VID`、`PID`、`MAC`
-- Android 可请求 MTU，iOS 可查询当前连接的最大写入长度
+- Android 可请求 MTU，iOS 可按 `remoteId` 查询目标连接的最大写入长度
+- Flutter 可控制 Android SDK 指令发送失败重发次数，默认关闭，`resendCount >= 1` 开启
 - 在 Dart 层统一构造 WiFi A6 配网指令，并通过 `writeA6` 下发
 - 解析 WiFi 扫描、状态、响应、MAC、SSID、密码、SN 与服务端配置事件
 - 支持 WiFi 指令日志开关，默认关闭
@@ -31,7 +32,7 @@ flutter pub add flutter_elink_ble
 
 ```yaml
 dependencies:
-  flutter_elink_ble: ^0.1.2
+  flutter_elink_ble: ^0.2.0
 ```
 
 ## Android 配置
@@ -83,6 +84,8 @@ iOS 端已随插件内置 `AILinkBleSDK.framework`。扫描、连接、断开和
 
 `AILinkBleSDK.framework` 是静态 archive，内部包含 `ELAILinkBleManager+WIFI` 等 Objective-C category。插件 podspec 已给 Pod target 注入 `-ObjC`，更新插件后需要重新执行 `pod install`，否则运行时可能出现 `unrecognized selector`。
 
+iOS 多连时，每个 `remoteId` 会使用独立的 `ELAILinkBleManager` session，避免 SDK 的 current peripheral 状态在多台设备之间互相覆盖。从近期扫描结果发起连接时，插件会先通过该 session 自己的 `CBCentralManager` 按 identifier retrieve 目标 `CBPeripheral`；retrieve 不到时才回退到 session 内部扫描同一个 `remoteId`。
+
 如果 iOS 蓝牙已打开但扫描失败，先确认宿主 App 是否已加入上述权限文案，并在系统设置中允许蓝牙权限。Native 层会区分 `bluetooth_off`、`bluetooth_unauthorized`、`bluetooth_unsupported` 与 `bluetooth_not_ready`，避免把权限或初始化中的状态误报为蓝牙关闭。
 
 ## 快速使用
@@ -129,23 +132,24 @@ flowchart TD
   A[打开蓝牙 / refreshAdapterState] --> B[startScan]
   B --> C[scanResults]
   C --> D[连接选中的设备]
-  D --> E[connectionEvents: connected]
-  E --> F[serviceDiscoveryEvents]
-  F --> G{发现可写 characteristic?}
-  G -- 否 --> F
-  G -- 是 --> H[initHandshake]
-  H --> I[写入 handshake A6 packet]
-  I --> J[protocolDataPackets]
-  J --> K[处理 handshake response]
-  K --> L[handshakeEvents: success]
-  L --> M[getBmVersion]
-  M --> N[writeA6 payload 0x0E]
-  N --> O[bmVersionEvents]
-  L --> P{平台 MTU 操作}
-  P -- Android --> Q[setAndroidMtu 517]
-  Q --> R[mtuEvents]
-  P -- iOS --> S[getIosMtu]
-  S --> T[withoutResponse / withResponse 最大写入长度]
+  D --> E[打开设备 tab]
+  E --> F[connectionEvents: connected]
+  F --> G[serviceDiscoveryEvents]
+  G --> H{发现可写 characteristic?}
+  H -- 否 --> G
+  H -- 是 --> I[initHandshake]
+  I --> J[写入 handshake A6 packet]
+  J --> K[protocolDataPackets]
+  K --> L[处理 handshake response]
+  L --> M[handshakeEvents: success]
+  M --> N[getBmVersion]
+  N --> O[writeA6 payload 0x0E]
+  O --> P[bmVersionEvents]
+  M --> Q{平台 MTU 操作}
+  Q -- Android --> R[setAndroidMtu 517]
+  R --> S[mtuEvents]
+  Q -- iOS --> T[getIosMtu]
+  T --> U[withoutResponse / withResponse 最大写入长度]
 ```
 
 对应 example 实现：
@@ -153,6 +157,10 @@ flowchart TD
 - 扫描使用 `ElinkBle.startScan()` 和 `ElinkBle.scanResults`。
 - 连接可用状态由 `ElinkBle.connectionEvents` 和
   `ElinkBle.serviceDiscoveryEvents` 共同判断。
+- 插件内 `ElinkBle.connect()` 不会主动停止扫描；example 在连接选中设备前
+  停止当前扫描，连接成功后为每台设备创建独立 tab，并自动切到新设备 tab。
+- 设备操作按 `remoteId` 路由，写入、MTU、RSSI、WiFi 配网和断开都作用于当前
+  设备 tab。
 - 发现可写 characteristic 后触发 Flutter A6 handshake。
 - BM 版本号通过 `ElinkBle.getBmVersion()` 查询，本质是发送 A6 payload
   `0x0E`。
@@ -164,14 +172,15 @@ flowchart TD
 连接并写入数据：
 
 ```dart
+await ElinkBle.stopScan(); // example UI 会在连接前停止当前扫描。
 await ElinkBle.connect(result.device);
 
 // 推荐：发送 A6 payload，SDK 会自动拼接 A6 包头、包尾和 checksum。
 // Recommended: send A6 payload; the SDK adds header, tail, and checksum.
 await ElinkBle.writeA6(result.device.remoteId, [0x01, 0x02]);
 
-// 推荐：发送 A7 payload，Android 可传 CID；iOS 使用当前连接设备上下文。
-// Recommended: send A7 payload; Android accepts CID and iOS uses the active device context.
+// 推荐：发送 A7 payload，Android 可传 CID；iOS 按 remoteId 路由到目标连接。
+// Recommended: send A7 payload; Android accepts CID and iOS routes by remoteId.
 await ElinkBle.writeA7(result.device.remoteId, [0x03, 0x04], cid: 0x1234);
 
 // Raw write 仍保留，适合已有业务已经自行组好完整 packet 的场景。
@@ -189,8 +198,13 @@ await ElinkBle.readRssi(result.device.remoteId);
 // Android only: request GATT MTU. Result is emitted by ElinkBle.mtuEvents.
 await ElinkBle.setAndroidMtu(result.device.remoteId, 247);
 
-// iOS only：查询当前连接下 CoreBluetooth 最大写入长度。
-// iOS only: read CoreBluetooth maximum write lengths for the active connection.
+// Android only：指令重发默认关闭，0 会重新关闭。
+// Android only: command resend is disabled by default; 0 disables it again.
+await ElinkBle.setAndroidCommandResendCount(resendCount: 3);
+await ElinkBle.setAndroidCommandResendCount();
+
+// iOS only：查询目标连接下 CoreBluetooth 最大写入长度。
+// iOS only: read CoreBluetooth maximum write lengths for the target connection.
 final iosMtu = await ElinkBle.getIosMtu(result.device.remoteId);
 print(
   'iOS write lengths: '
@@ -206,10 +220,9 @@ await ElinkBle.setAndroidPreferredPhy(
   rxPhy: ElinkAndroidPhy.phy2M,
 );
 
-// 断开指定设备，或直接断开当前连接设备。
-// Disconnect a target device, or disconnect the current connected device.
+// 断开指定设备。
+// Disconnect a target device.
 await ElinkBle.disconnect(result.device.remoteId);
-await ElinkBle.disconnectCurrent();
 ```
 
 WiFi 配网：
@@ -355,7 +368,7 @@ await passthroughSub.cancel();
 await characteristicSub.cancel();
 await rssiSub.cancel();
 await mtuSub.cancel();
-await ElinkBle.disconnectCurrent();
+await ElinkBle.disconnect(result.device.remoteId);
 await ElinkBle.dispose();
 ```
 
@@ -421,6 +434,8 @@ Native events 会被 Dart 层归一化成以下 streams：
 - 扫描前请先确认 `ElinkBle.bluetoothStateNow == ElinkAdapterState.on`，否则 Android/iOS SDK 都可能拒绝 scan。
 - Android 7.0+ 对 BLE scan 有系统限流，30 秒内不要反复 `startScan` 超过 5 次。插件会复用相同配置的进行中扫描，并在 Android 原生层拦截过快的重启，返回 `scan_throttled` 和 `retryAfterMs`。
 - iOS 的 `remoteId` 是 `CBPeripheral.identifier`，不是设备 MAC address。
+- iOS 多连按 `remoteId` 维护独立 `ELAILinkBleManager` session；写入或断开时必须传目标设备的 `remoteId`。
 - iOS 不支持 App 主动设置 MTU；只能通过系统协商后的 `maximumWriteValueLength` 判断可写长度。
+- Android 指令重发默认关闭；只有业务确实需要 SDK 层发送失败重试时再设置 `resendCount >= 1`。
 - Android 12+ 宿主 App 需要自行申请 `BLUETOOTH_SCAN`、`BLUETOOTH_ADVERTISE`、`BLUETOOTH_CONNECT` runtime permission；Android 11 及以下扫描还需要 location permission，且系统定位服务需要打开。
 - Elink 协议 helper 只负责数据处理，业务命令 payload 仍由上层按产品协议生成。

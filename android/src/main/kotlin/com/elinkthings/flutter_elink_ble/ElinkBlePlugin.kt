@@ -22,6 +22,7 @@ import com.pingwang.bluetoothlib.AILinkBleManager
 import com.pingwang.bluetoothlib.AILinkSDK
 import com.pingwang.bluetoothlib.bean.BleValueBean
 import com.pingwang.bluetoothlib.config.BleConfig
+import com.pingwang.bluetoothlib.device.BleDevice
 import com.pingwang.bluetoothlib.device.ElinkBleCrypto
 import com.pingwang.bluetoothlib.device.SendBleBean
 import com.pingwang.bluetoothlib.device.SendDataBean
@@ -50,7 +51,6 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
     private var bluetoothAdapter: BluetoothAdapter? = null
     private val scanResults = mutableMapOf<String, BleValueBean>()
     private val listenerAttachedRemoteIds = mutableSetOf<String>()
-    private var connectedRemoteId: String? = null
     private var bluetoothStateReceiver: BroadcastReceiver? = null
     private var sdkCallback: OnCallbackBle? = null
     private var sdkReady = false
@@ -58,6 +58,7 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
     private var isScanning = false
     private var activeScanConfig: ScanConfig? = null
     private var lastScanStopElapsedMs = 0L
+    private var androidCommandResendCount = 0
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         context = binding.applicationContext
@@ -120,10 +121,6 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
                     disconnectInternal(remoteId)
                     result.success(null)
                 }
-                "disconnectCurrent" -> {
-                    disconnectCurrentInternal()
-                    result.success(null)
-                }
                 "readRssi" -> {
                     val remoteId = call.argument<String>("remoteId") ?: ""
                     readRssiInternal(remoteId)
@@ -139,6 +136,11 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
                     val txPhy = call.argument<Int>("txPhy") ?: 0
                     val rxPhy = call.argument<Int>("rxPhy") ?: 0
                     result.success(setAndroidPreferredPhyInternal(remoteId, txPhy, rxPhy))
+                }
+                "setAndroidCommandResendCount" -> {
+                    val resendCount = call.argument<Int>("resendCount") ?: 0
+                    setAndroidCommandResendCountInternal(resendCount)
+                    result.success(null)
                 }
                 "write" -> {
                     val remoteId = call.argument<String>("remoteId") ?: ""
@@ -166,11 +168,11 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
                 }
                 "initHandshake" -> result.success(initHandshakeData())
                 "getHandshakeEncryptData" -> {
-                    val payload = call.arguments as? ByteArray
+                    val payload = handshakePayloadArgument(call.arguments)
                     result.success(payload?.let { getHandshakeEncryptData(it) })
                 }
                 "checkHandshakeStatus" -> {
-                    val payload = call.arguments as? ByteArray
+                    val payload = handshakePayloadArgument(call.arguments)
                     result.success(payload?.let { checkHandshakeStatus(it) } ?: false)
                 }
                 "mcuEncrypt" -> {
@@ -269,7 +271,6 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
                         }
                         override fun onConnectionSuccess(mac: String?) {
                             mac?.let {
-                                connectedRemoteId = it
                                 emitConnection(it, "connected")
                                 attachDeviceListeners(it)
                             }
@@ -293,9 +294,6 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
                         }
                         override fun onDisConnected(mac: String?, code: Int) {
                             mac?.let {
-                                if (connectedRemoteId == it) {
-                                    connectedRemoteId = null
-                                }
                                 listenerAttachedRemoteIds.remove(it)
                                 emitConnection(it, "disconnected", "code=$code")
                             }
@@ -411,15 +409,7 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
             throw IllegalArgumentException("remoteId is empty")
         }
         emitConnection(remoteId, "disconnecting")
-        if (connectedRemoteId == remoteId) {
-            connectedRemoteId = null
-        }
         AILinkBleManager.getInstance().disconnect(remoteId)
-    }
-
-    private fun disconnectCurrentInternal() {
-        val remoteId = connectedRemoteId ?: return
-        disconnectInternal(remoteId)
     }
 
     private fun readRssiInternal(remoteId: String) {
@@ -466,13 +456,7 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
     }
 
     private fun writeInternal(remoteId: String, data: ByteArray, type: String) {
-        ensureSdkReady()
-        if (!hasConnectPermission()) {
-            throw SecurityException("Missing Bluetooth connect permission")
-        }
-        ensureBluetoothPoweredOn()
-        val device = AILinkBleManager.getInstance().getBleDevice(remoteId)
-            ?: throw IllegalStateException("Device is not connected: $remoteId")
+        val device = writableDevice(remoteId)
         val writeUuid = if (type == "withResponse") {
             BleConfig.UUID_WRITE_AILINK
         } else {
@@ -483,19 +467,22 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
     }
 
     private fun writeA6Internal(remoteId: String, payload: ByteArray) {
-        ensureSdkReady()
-        if (!hasConnectPermission()) {
-            throw SecurityException("Missing Bluetooth connect permission")
-        }
-        ensureBluetoothPoweredOn()
-        val device = AILinkBleManager.getInstance().getBleDevice(remoteId)
-            ?: throw IllegalStateException("Device is not connected: $remoteId")
+        val device = writableDevice(remoteId)
         val sendBleBean = SendBleBean()
         sendBleBean.setHex(payload)
         device.sendData(sendBleBean)
     }
 
     private fun writeA7Internal(remoteId: String, payload: ByteArray, cid: Int?) {
+        val device = writableDevice(remoteId)
+        val deviceType = cid ?: device.cid
+        val sendMcuBean = SendMcuBean()
+        sendMcuBean.setHex(deviceType, payload)
+        device.sendData(sendMcuBean)
+    }
+
+    // 获取可写设备并同步 Flutter 配置的 Android SDK 指令重发开关。
+    private fun writableDevice(remoteId: String): BleDevice {
         ensureSdkReady()
         if (!hasConnectPermission()) {
             throw SecurityException("Missing Bluetooth connect permission")
@@ -503,15 +490,30 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
         ensureBluetoothPoweredOn()
         val device = AILinkBleManager.getInstance().getBleDevice(remoteId)
             ?: throw IllegalStateException("Device is not connected: $remoteId")
-        val deviceType = cid ?: device.cid
-        val sendMcuBean = SendMcuBean()
-        sendMcuBean.setHex(deviceType, payload)
-        device.sendData(sendMcuBean)
+        applyCommandResendConfig(device)
+        return device
+    }
+
+    // 更新 Android 指令发送失败重发次数，负数为无效配置，忽略并保持当前配置。
+    // 配置会在连接设备可用时和每次发送前同步到 SDK BleDevice。
+    private fun setAndroidCommandResendCountInternal(resendCount: Int) {
+        if (resendCount < 0) return
+        androidCommandResendCount = resendCount
+    }
+
+    // 根据 Flutter 配置更新 Android SDK 指令发送失败重发开关。
+    private fun applyCommandResendConfig(device: BleDevice) {
+        if (androidCommandResendCount >= 1) {
+            device.setResend(true, androidCommandResendCount)
+        } else {
+            device.setResend(false, 0)
+        }
     }
 
     private fun attachDeviceListeners(remoteId: String) {
-        if (listenerAttachedRemoteIds.contains(remoteId)) return
         val device = AILinkBleManager.getInstance().getBleDevice(remoteId) ?: return
+        applyCommandResendConfig(device)
+        if (listenerAttachedRemoteIds.contains(remoteId)) return
         listenerAttachedRemoteIds.add(remoteId)
         // SDK 会先回调带 uuid 的 default method，再回调不带 uuid 的 method。
         // Use only UUID callbacks to avoid forwarding the same packet twice.
@@ -879,6 +881,15 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
         return ElinkBleCrypto.checkHandshakeStatus(data)
     }
 
+    // 读取握手 payload，兼容旧版直接传 ByteArray 和新版 map 参数。
+    private fun handshakePayloadArgument(arguments: Any?): ByteArray? {
+        return when (arguments) {
+            is ByteArray -> arguments
+            is Map<*, *> -> arguments["payload"] as? ByteArray
+            else -> null
+        }
+    }
+
     private fun mcuEncrypt(cid: ByteArray, mac: ByteArray, payload: ByteArray): ByteArray? {
         return ElinkBleCrypto.mcuEncrypt(cid, mac, payload)
     }
@@ -919,13 +930,10 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
 
     private fun disposeSdkResources() {
         stopScanInternal()
-        connectedRemoteId?.let { remoteId ->
-            runCatching { AILinkBleManager.getInstance().disconnect(remoteId) }
-        }
+        runCatching { AILinkBleManager.getInstance().disconnectAll() }
         sdkCallback?.let { AILinkBleManager.getInstance().removeOnCallbackBle(it) }
         sdkCallback = null
         sdkReady = false
-        connectedRemoteId = null
         scanResults.clear()
         listenerAttachedRemoteIds.clear()
     }

@@ -16,12 +16,15 @@ WiFi provisioning commands are built in Dart and sent through the shared `writeA
 - Listen to Bluetooth state with `ElinkBle.bluetoothState` or `ElinkBle.setBluetoothStateCallback`.
 - Scan Elink broadcast and connectable devices.
 - Parse `CID`, `VID`, `PID`, and `MAC` from Elink manufacturer data.
-- Connect, disconnect, and write BLE data through the native SDK.
+- Connect multiple BLE devices, disconnect by `remoteId`, and write BLE data
+  through the native SDK.
 - Send A6 and A7 payloads with `ElinkBle.writeA6()` and `ElinkBle.writeA7()`.
 - Receive SDK A6/A7 payload callbacks through `ElinkBle.protocolDataPackets`.
 - Receive passthrough or non-protocol data through `ElinkBle.passthroughDataPackets`.
 - Receive low-level characteristic events through `ElinkBle.characteristicEvents`.
 - Request Android MTU changes and read iOS maximum write lengths.
+- Configure Android SDK command resend count from Flutter. It is disabled by
+  default and enabled when `resendCount >= 1`.
 - Run WiFi provisioning commands from Dart and listen for typed WiFi events.
 - Use native SDK helpers for broadcast decrypt and MCU A7 encrypt/decrypt; handshake is handled uniformly in the Flutter A6 data layer.
 
@@ -37,7 +40,7 @@ Or add it manually to `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  flutter_elink_ble: ^0.1.2
+  flutter_elink_ble: ^0.2.0
 ```
 
 ## Android Setup
@@ -88,6 +91,8 @@ The plugin currently vendors `AILinkBleSDK.framework`. The sample framework cont
 
 `AILinkBleSDK.framework` is a static archive and contains Objective-C categories such as `ELAILinkBleManager+WIFI`. The plugin podspec injects `-ObjC` into the Pod target so those category methods are linked into `flutter_elink_ble.framework`. Run `pod install` again after updating the plugin; otherwise runtime may fail with `unrecognized selector`.
 
+Each iOS connection is handled by its own `ELAILinkBleManager` session so the SDK's current peripheral state is not shared across connected devices. When connecting from a recent scan result, the plugin first tries to retrieve the target `CBPeripheral` by identifier through that session's `CBCentralManager`; if it cannot be retrieved, it falls back to a session-local scan for the same `remoteId`.
+
 If Bluetooth is on but scanning fails on iOS, check the host app permission text and the app's Bluetooth permission in iOS Settings. Native errors are normalized as `bluetooth_off`, `bluetooth_unauthorized`, `bluetooth_unsupported`, or `bluetooth_not_ready`.
 
 ## Quick Start
@@ -132,8 +137,8 @@ version, and MTU handling:
 flowchart TD
   A[Open Bluetooth / refreshAdapterState] --> B[startScan]
   B --> C[scanResults]
-  C --> D[stopScan for single-device flow]
-  D --> E[connect selected device]
+  C --> D[connect selected device]
+  D --> E[open device tab]
   E --> F[connectionEvents: connected]
   F --> G[serviceDiscoveryEvents]
   G --> H{write characteristic ready?}
@@ -158,9 +163,11 @@ In the example implementation:
 - Scan uses `ElinkBle.startScan()` and `ElinkBle.scanResults`.
 - Connection readiness is tracked by `ElinkBle.connectionEvents` and
   `ElinkBle.serviceDiscoveryEvents`.
-- `ElinkBle.connect()` does not stop active scanning. The example is a
-  single-device flow, so it calls `ElinkBle.stopScan()` before connecting.
-  Multi-device business flows can keep scanning while connecting devices.
+- `ElinkBle.connect()` does not stop active scanning in the plugin. The example
+  stops its current scan before connecting the selected device, then creates one
+  tab per connected device and automatically switches to the new tab.
+- Device operations are routed by `remoteId`, so writes, MTU, RSSI, WiFi
+  provisioning, and disconnect actions target the current device tab.
 - Handshake starts after a writable characteristic is discovered.
 - BM version is queried with `ElinkBle.getBmVersion()`, which sends A6 payload
   `0x0E`.
@@ -172,7 +179,7 @@ In the example implementation:
 Connect and write:
 
 ```dart
-await ElinkBle.stopScan(); // Single-device business flow: stop discovery first.
+await ElinkBle.stopScan(); // Example UI stops the current scan before connecting.
 await ElinkBle.connect(result.device);
 
 await ElinkBle.writeA6(result.device.remoteId, [0x01, 0x02]);
@@ -189,7 +196,11 @@ await ElinkBle.readRssi(result.device.remoteId);
 // Android only: request GATT MTU. Result is emitted by ElinkBle.mtuEvents.
 await ElinkBle.setAndroidMtu(result.device.remoteId, 247);
 
-// iOS only: read CoreBluetooth maximum write lengths for the active connection.
+// Android only: command resend is disabled by default; 0 disables it again.
+await ElinkBle.setAndroidCommandResendCount(resendCount: 3);
+await ElinkBle.setAndroidCommandResendCount();
+
+// iOS only: read CoreBluetooth maximum write lengths for the target connection.
 final iosMtu = await ElinkBle.getIosMtu(result.device.remoteId);
 print(
   'iOS write lengths: '
@@ -205,7 +216,6 @@ await ElinkBle.setAndroidPreferredPhy(
 );
 
 await ElinkBle.disconnect(result.device.remoteId);
-await ElinkBle.disconnectCurrent();
 ```
 
 ## WiFi Provisioning
@@ -349,7 +359,7 @@ await passthroughSub.cancel();
 await characteristicSub.cancel();
 await rssiSub.cancel();
 await mtuSub.cancel();
-await ElinkBle.disconnectCurrent();
+await ElinkBle.disconnect(result.device.remoteId);
 await ElinkBle.dispose();
 ```
 
@@ -397,7 +407,11 @@ WiFi-specific Dart streams:
 - Use `ElinkBle.openBluetooth()` to guide the user to enable Bluetooth. Android opens the system enable prompt or Bluetooth settings; iOS cannot turn Bluetooth on directly, so the plugin only refreshes current state and does not open Settings. Listen to `ElinkBle.bluetoothState` for the final state.
 - Android 7.0+ throttles BLE scanning; avoid more than 5 `startScan` calls in 30 seconds. The plugin reuses an active scan with the same configuration and blocks too-fast Android restarts with `scan_throttled` and `retryAfterMs`.
 - iOS `remoteId` is `CBPeripheral.identifier`, not a MAC address.
+- iOS multi-device connections use one `ELAILinkBleManager` session per
+  `remoteId`; always pass the target `remoteId` when writing or disconnecting.
 - iOS does not support active MTU requests from apps; use the system-negotiated maximum write length instead.
+- Android command resend is disabled by default. Set `resendCount >= 1` only
+  when the business flow needs SDK-level retry after a failed command send.
 - Android 12+ host apps must request `BLUETOOTH_SCAN`, `BLUETOOTH_ADVERTISE`, and `BLUETOOTH_CONNECT` runtime permissions themselves. Android 11 and earlier also require location permission for scanning, and system location services must be enabled.
 - A6/A7 writes should use `writeA6` and `writeA7`; the native SDK adds frame headers, tails, and checksums.
 - Raw `write` remains available only for business code that already builds full packets.

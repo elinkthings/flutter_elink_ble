@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_elink_ble_example/bluetooth_connection_page.dart';
+import 'package:flutter_elink_ble_example/connected_device_info.dart';
 import 'package:flutter_elink_ble_example/main.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -21,22 +22,30 @@ void main() {
   ) async {
     var opened = false;
     var mtuRequested = false;
+    var logsCleared = false;
 
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
           body: BluetoothConnectionPage(
-            connectedRemoteId: 'AA:BB:CC:DD:EE:FF',
-            connectedMacAddress: 'AA:BB:CC:DD:EE:FF',
-            bmVersion: null,
+            connectedDevice: const ConnectedDeviceInfo(
+              remoteId: 'AA:BB:CC:DD:EE:FF',
+              macAddress: 'AA:BB:CC:DD:EE:FF',
+              bmVersion: null,
+              handshakeReady: false,
+            ),
             enableTlvParse: false,
-            logs: const <String>[],
+            logs: const <String>['[00:00:00] demo'],
+            onClearLogs: () => logsCleared = true,
             onDisconnect: () {},
             onGetBmVersion: () {},
             mtuActionLabel: 'Set MTU 517',
             onMtuAction: () => mtuRequested = true,
             onOpenWifiProvisioning: () => opened = true,
             onEnableTlvParseChanged: (_) {},
+            showAndroidCommandResendSetting: false,
+            androidCommandResendCount: 0,
+            onAndroidCommandResendCountChanged: (_) {},
           ),
         ),
       ),
@@ -44,8 +53,10 @@ void main() {
 
     await tester.tap(find.byIcon(Icons.wifi));
     await tester.tap(find.text('Set MTU 517'));
+    await tester.tap(find.byTooltip('Clear logs'));
 
     expect(opened, isTrue);
     expect(mtuRequested, isTrue);
+    expect(logsCleared, isTrue);
   });
 }

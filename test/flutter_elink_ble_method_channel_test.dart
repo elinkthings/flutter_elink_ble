@@ -81,7 +81,6 @@ void main() {
       type: 'withoutResponse',
     );
     await platform.disconnect('remote');
-    await platform.disconnectCurrent();
     await platform.readRssi('remote');
     await platform.setAndroidMtu('remote', 247);
     final iosMtu = await platform.getIosMtu('remote');
@@ -90,27 +89,29 @@ void main() {
       txPhy: ElinkAndroidPhy.phy2M.value,
       rxPhy: ElinkAndroidPhy.phy1M.value,
     );
+    await platform.setAndroidCommandResendCount(3);
 
     expect(calls.map((call) => call.method), [
       'connect',
       'write',
       'disconnect',
-      'disconnectCurrent',
       'readRssi',
       'setAndroidMtu',
       'getIosMtu',
       'setAndroidPreferredPhy',
+      'setAndroidCommandResendCount',
     ]);
     expect(calls[0].arguments['remoteId'], 'remote');
     expect(calls[1].arguments['data'], Uint8List.fromList([0x01]));
     expect(calls[2].arguments['remoteId'], 'remote');
-    expect(calls[4].arguments['remoteId'], 'remote');
-    expect(calls[5].arguments['mtu'], 247);
-    expect(calls[6].arguments['remoteId'], 'remote');
+    expect(calls[3].arguments['remoteId'], 'remote');
+    expect(calls[4].arguments['mtu'], 247);
+    expect(calls[5].arguments['remoteId'], 'remote');
     expect(iosMtu['maxWriteWithoutResponse'], 244);
     expect(iosMtu['maxWriteWithResponse'], 512);
-    expect(calls[7].arguments['txPhy'], ElinkAndroidPhy.phy2M.value);
-    expect(calls[7].arguments['rxPhy'], ElinkAndroidPhy.phy1M.value);
+    expect(calls[6].arguments['txPhy'], ElinkAndroidPhy.phy2M.value);
+    expect(calls[6].arguments['rxPhy'], ElinkAndroidPhy.phy1M.value);
+    expect(calls[7].arguments['resendCount'], 3);
   });
 
   test('writeA6 and writeA7 use method channel contract', () async {
@@ -130,6 +131,29 @@ void main() {
     expect(calls[1].arguments['remoteId'], 'remote');
     expect(calls[1].arguments['payload'], Uint8List.fromList([0x03, 0x04]));
     expect(calls[1].arguments['cid'], 0x1234);
+  });
+
+  test('handshake methods forward remoteId context', () async {
+    await platform.initHandshake(remoteId: 'remote');
+    await platform.getHandshakeEncryptData(
+      Uint8List.fromList([0xA6]),
+      remoteId: 'remote',
+    );
+    await platform.checkHandshakeStatus(
+      Uint8List.fromList([0x24]),
+      remoteId: 'remote',
+    );
+
+    expect(calls.map((call) => call.method), [
+      'initHandshake',
+      'getHandshakeEncryptData',
+      'checkHandshakeStatus',
+    ]);
+    expect(calls[0].arguments['remoteId'], 'remote');
+    expect(calls[1].arguments['remoteId'], 'remote');
+    expect(calls[1].arguments['payload'], Uint8List.fromList([0xA6]));
+    expect(calls[2].arguments['remoteId'], 'remote');
+    expect(calls[2].arguments['payload'], Uint8List.fromList([0x24]));
   });
 
   test('data processor validates A6 packets', () {

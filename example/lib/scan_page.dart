@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_elink_ble/flutter_elink_ble.dart';
 
+import 'android_resend_count_setting.dart';
+
 /// Sample page for scanning BLE devices (BLE 设备扫描示例页面).
 class ScanPage extends StatelessWidget {
   /// Create the scan sample page (创建扫描示例页面).
@@ -9,10 +11,14 @@ class ScanPage extends StatelessWidget {
     required this.adapterState,
     required this.isScanning,
     required this.scanResults,
+    required this.connectedRemoteIds,
     required this.onOpenBluetooth,
     required this.onStartScan,
     required this.onStopScan,
     required this.onConnect,
+    required this.showAndroidCommandResendSetting,
+    required this.androidCommandResendCount,
+    required this.onAndroidCommandResendCountChanged,
   });
 
   /// Current BLE adapter state (当前 BLE adapter 状态).
@@ -23,6 +29,9 @@ class ScanPage extends StatelessWidget {
 
   /// Latest BLE scan results (最新 BLE 扫描结果).
   final List<ElinkScanResult> scanResults;
+
+  /// 已连接 BLE 设备 remoteId 集合。
+  final Set<String> connectedRemoteIds;
 
   /// Callback for asking the system to open Bluetooth (请求系统打开蓝牙的回调).
   final VoidCallback onOpenBluetooth;
@@ -36,12 +45,35 @@ class ScanPage extends StatelessWidget {
   /// Callback for connecting to one scanned BLE device (连接单个已扫描 BLE 设备的回调).
   final ValueChanged<ElinkDevice> onConnect;
 
+  /// Whether to show Android command resend setting (是否展示 Android 指令重发设置).
+  final bool showAndroidCommandResendSetting;
+
+  /// Current Android command resend count (当前 Android 指令重发次数).
+  final int androidCommandResendCount;
+
+  /// Callback for changing Android command resend count (修改 Android 指令重发次数的回调).
+  final ValueChanged<int> onAndroidCommandResendCountChanged;
+
   /// Build the BLE scan page (构建 BLE 扫描页面).
   @override
   Widget build(BuildContext context) {
     return Column(
       children: [
-        Padding(padding: const EdgeInsets.all(12), child: _buildScanToolbar()),
+        Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            children: [
+              _buildScanToolbar(),
+              if (showAndroidCommandResendSetting) ...[
+                const SizedBox(height: 8),
+                AndroidResendCountSetting(
+                  resendCount: androidCommandResendCount,
+                  onChanged: onAndroidCommandResendCountChanged,
+                ),
+              ],
+            ],
+          ),
+        ),
         Expanded(
           child: scanResults.isEmpty
               ? _buildEmptyState(context)
@@ -97,12 +129,13 @@ class ScanPage extends StatelessWidget {
 
   /// Build one scan result row (构建单条扫描结果行).
   Widget _buildScanResultTile(ElinkScanResult result) {
+    final isConnected = connectedRemoteIds.contains(result.device.remoteId);
     return ListTile(
       title: Text(_deviceTitle(result.device)),
       subtitle: Text(_scanResultSubtitle(result)),
       trailing: FilledButton.tonal(
-        onPressed: () => onConnect(result.device),
-        child: const Text('Connect'),
+        onPressed: isConnected ? null : () => onConnect(result.device),
+        child: Text(isConnected ? 'Connected' : 'Connect'),
       ),
     );
   }

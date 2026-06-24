@@ -86,11 +86,6 @@ class MethodChannelFlutterElinkBle extends FlutterElinkBlePlatform {
   }
 
   @override
-  Future<void> disconnectCurrent() {
-    return methodChannel.invokeMethod<void>('disconnectCurrent');
-  }
-
-  @override
   Future<void> readRssi(String remoteId) {
     return methodChannel.invokeMethod<void>('readRssi', <String, Object?>{
       'remoteId': remoteId,
@@ -139,6 +134,15 @@ class MethodChannelFlutterElinkBle extends FlutterElinkBlePlatform {
         false;
   }
 
+  /// 通过 MethodChannel 设置 Android 指令发送失败重发次数。
+  @override
+  Future<void> setAndroidCommandResendCount(int resendCount) {
+    return methodChannel.invokeMethod<void>(
+      'setAndroidCommandResendCount',
+      <String, Object?>{'resendCount': resendCount},
+    );
+  }
+
   @override
   Future<void> write({
     required String remoteId,
@@ -179,24 +183,32 @@ class MethodChannelFlutterElinkBle extends FlutterElinkBlePlatform {
   }
 
   @override
-  Future<Uint8List?> initHandshake() {
-    return methodChannel.invokeMethod<Uint8List>('initHandshake');
+  Future<Uint8List?> initHandshake({String? remoteId}) {
+    return methodChannel.invokeMethod<Uint8List>('initHandshake', {
+      'remoteId': remoteId,
+    });
   }
 
   @override
-  Future<Uint8List?> getHandshakeEncryptData(Uint8List payload) {
-    return methodChannel.invokeMethod<Uint8List>(
-      'getHandshakeEncryptData',
-      payload,
-    );
+  Future<Uint8List?> getHandshakeEncryptData(
+    Uint8List payload, {
+    String? remoteId,
+  }) {
+    return methodChannel.invokeMethod<Uint8List>('getHandshakeEncryptData', {
+      'payload': payload,
+      'remoteId': remoteId,
+    });
   }
 
   @override
-  Future<bool> checkHandshakeStatus(Uint8List payload) async {
-    return await methodChannel.invokeMethod<bool>(
-          'checkHandshakeStatus',
-          payload,
-        ) ??
+  Future<bool> checkHandshakeStatus(
+    Uint8List payload, {
+    String? remoteId,
+  }) async {
+    return await methodChannel.invokeMethod<bool>('checkHandshakeStatus', {
+          'payload': payload,
+          'remoteId': remoteId,
+        }) ??
         false;
   }
 

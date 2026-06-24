@@ -1,3 +1,21 @@
+## 0.2.0
+
+* **Breaking:** removed `disconnectCurrent`; disconnect a specific connection
+  with `ElinkBle.disconnect(remoteId)`.
+* Added Flutter-controlled Android command resend configuration with
+  `ElinkBle.setAndroidCommandResendCount()`. `resendCount >= 1` enables SDK
+  resend and `0` disables it; default is disabled.
+* Added iOS multi-device connection support by routing each remoteId through
+  its own `ELAILinkBleManager` session. Writes, RSSI, MTU queries, and
+  disconnects are now scoped to the target remoteId.
+* Optimized iOS connect by trying `retrievePeripherals(withIdentifiers:)` in
+  the target session before falling back to a session-local scan.
+* Scoped Flutter A6 handshake state by remoteId so multiple connected devices
+  do not overwrite each other's handshake seed.
+* Updated the example app with one tab per connected device, automatic tab
+  switching after connection, per-device logs with per-tab clearing, connected
+  scan-result state, and Android resend-count controls.
+
 ## 0.1.3
 
 * Changed native `connect` behavior so Android and iOS no longer stop active

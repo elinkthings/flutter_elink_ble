@@ -19,7 +19,7 @@ class MockElinkBlePlatform
   int startScanCallCount = 0;
   bool openedBluetooth = false;
   String? lastConnectedRemoteId;
-  bool disconnectedCurrent = false;
+  String? lastDisconnectedRemoteId;
   String? lastReadRssiRemoteId;
   String? lastSetMtuRemoteId;
   int? lastSetMtu;
@@ -27,6 +27,7 @@ class MockElinkBlePlatform
   String? lastSetPhyRemoteId;
   int? lastSetTxPhy;
   int? lastSetRxPhy;
+  int? lastAndroidCommandResendCount;
   String? lastWriteRemoteId;
   Uint8List lastWriteData = Uint8List(0);
   String? lastWriteType;
@@ -37,6 +38,9 @@ class MockElinkBlePlatform
   String? lastWriteA7RemoteId;
   Uint8List lastWriteA7Payload = Uint8List(0);
   int? lastWriteA7Cid;
+  String? lastInitHandshakeRemoteId;
+  String? lastHandshakeEncryptRemoteId;
+  String? lastCheckHandshakeRemoteId;
 
   @override
   Stream<Map<dynamic, dynamic>> get events => eventController.stream;
@@ -77,11 +81,8 @@ class MockElinkBlePlatform
   }
 
   @override
-  Future<void> disconnect(String remoteId) async {}
-
-  @override
-  Future<void> disconnectCurrent() async {
-    disconnectedCurrent = true;
+  Future<void> disconnect(String remoteId) async {
+    lastDisconnectedRemoteId = remoteId;
   }
 
   @override
@@ -117,6 +118,12 @@ class MockElinkBlePlatform
     lastSetTxPhy = txPhy;
     lastSetRxPhy = rxPhy;
     return true;
+  }
+
+  /// 记录 Android 指令发送失败重发次数配置。
+  @override
+  Future<void> setAndroidCommandResendCount(int resendCount) async {
+    lastAndroidCommandResendCount = resendCount;
   }
 
   @override
@@ -177,14 +184,28 @@ class MockElinkBlePlatform
   Future<Uint8List?> decryptBroadcast(Uint8List payload) async => payload;
 
   @override
-  Future<Uint8List?> initHandshake() async => Uint8List.fromList([1, 2]);
+  Future<Uint8List?> initHandshake({String? remoteId}) async {
+    lastInitHandshakeRemoteId = remoteId;
+    return Uint8List.fromList([1, 2]);
+  }
 
   @override
-  Future<Uint8List?> getHandshakeEncryptData(Uint8List payload) async =>
-      payload;
+  Future<Uint8List?> getHandshakeEncryptData(
+    Uint8List payload, {
+    String? remoteId,
+  }) async {
+    lastHandshakeEncryptRemoteId = remoteId;
+    return payload;
+  }
 
   @override
-  Future<bool> checkHandshakeStatus(Uint8List payload) async => true;
+  Future<bool> checkHandshakeStatus(
+    Uint8List payload, {
+    String? remoteId,
+  }) async {
+    lastCheckHandshakeRemoteId = remoteId;
+    return true;
+  }
 
   @override
   Future<Uint8List?> mcuEncrypt({
@@ -303,13 +324,13 @@ void main() {
     expect(fakePlatform.lastWriteType, 'withoutResponse');
   });
 
-  test('disconnectCurrent forwards to platform', () async {
+  test('disconnect forwards to platform', () async {
     final fakePlatform = MockElinkBlePlatform();
     FlutterElinkBlePlatform.instance = fakePlatform;
 
-    await ElinkBle.disconnectCurrent();
+    await ElinkBle.disconnect('remote-1');
 
-    expect(fakePlatform.disconnectedCurrent, isTrue);
+    expect(fakePlatform.lastDisconnectedRemoteId, 'remote-1');
   });
 
   test('readRssi forwards to platform', () async {
@@ -344,6 +365,17 @@ void main() {
     expect(fakePlatform.lastSetPhyRemoteId, 'remote-1');
     expect(fakePlatform.lastSetTxPhy, ElinkAndroidPhy.phy2M.value);
     expect(fakePlatform.lastSetRxPhy, ElinkAndroidPhy.phy1M.value);
+  });
+
+  test('Android command resend count forwards to platform', () async {
+    final fakePlatform = MockElinkBlePlatform();
+    FlutterElinkBlePlatform.instance = fakePlatform;
+
+    await ElinkBle.setAndroidCommandResendCount(resendCount: 3);
+    expect(fakePlatform.lastAndroidCommandResendCount, 3);
+
+    await ElinkBle.setAndroidCommandResendCount();
+    expect(fakePlatform.lastAndroidCommandResendCount, 0);
   });
 
   test('writeA6 and writeA7 forward SDK payload arguments', () async {
@@ -1399,6 +1431,7 @@ void main() {
     expect(fakePlatform.lastWriteRemoteId, 'remote-1');
     expect(fakePlatform.lastWriteData, setPacket);
     expect(fakePlatform.lastWriteType, ElinkWriteType.withoutResponse.name);
+    expect(fakePlatform.lastHandshakeEncryptRemoteId, 'remote-1');
 
     fakePlatform.eventController.add({
       'type': 'protocolData',
@@ -1410,5 +1443,6 @@ void main() {
     final event = await nextHandshake;
     expect(event.remoteId, 'remote-1');
     expect(event.success, isTrue);
+    expect(fakePlatform.lastCheckHandshakeRemoteId, 'remote-1');
   });
 }

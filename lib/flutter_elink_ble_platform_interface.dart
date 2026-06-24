@@ -60,10 +60,6 @@ abstract class FlutterElinkBlePlatform extends PlatformInterface {
     throw UnimplementedError('disconnect() has not been implemented.');
   }
 
-  Future<void> disconnectCurrent() {
-    throw UnimplementedError('disconnectCurrent() has not been implemented.');
-  }
-
   Future<void> readRssi(String remoteId) {
     throw UnimplementedError('readRssi() has not been implemented.');
   }
@@ -85,6 +81,13 @@ abstract class FlutterElinkBlePlatform extends PlatformInterface {
   }) {
     throw UnimplementedError(
       'setAndroidPreferredPhy() has not been implemented.',
+    );
+  }
+
+  /// Android only: 设置指令发送失败重发次数，0 关闭，负数由 native 忽略。
+  Future<void> setAndroidCommandResendCount(int resendCount) {
+    throw UnimplementedError(
+      'setAndroidCommandResendCount() has not been implemented.',
     );
   }
 
@@ -112,17 +115,20 @@ abstract class FlutterElinkBlePlatform extends PlatformInterface {
     throw UnimplementedError('decryptBroadcast() has not been implemented.');
   }
 
-  Future<Uint8List?> initHandshake() {
+  Future<Uint8List?> initHandshake({String? remoteId}) {
     throw UnimplementedError('initHandshake() has not been implemented.');
   }
 
-  Future<Uint8List?> getHandshakeEncryptData(Uint8List payload) {
+  Future<Uint8List?> getHandshakeEncryptData(
+    Uint8List payload, {
+    String? remoteId,
+  }) {
     throw UnimplementedError(
       'getHandshakeEncryptData() has not been implemented.',
     );
   }
 
-  Future<bool> checkHandshakeStatus(Uint8List payload) {
+  Future<bool> checkHandshakeStatus(Uint8List payload, {String? remoteId}) {
     throw UnimplementedError(
       'checkHandshakeStatus() has not been implemented.',
     );

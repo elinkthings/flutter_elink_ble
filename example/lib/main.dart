@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_elink_ble/flutter_elink_ble.dart';
 
 import 'bluetooth_connection_page.dart';
+import 'connected_device_info.dart';
 import 'example_time_utils.dart';
 import 'scan_page.dart';
 import 'wifi_provisioning_page.dart';
@@ -43,7 +44,7 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
   static const int _defaultAndroidMtu = 517;
 
   final List<StreamSubscription<Object?>> _subscriptions = [];
-  final List<String> _logs = <String>[];
+  final Map<String, List<String>> _deviceLogs = <String, List<String>>{};
   final Set<String> _handshakeStartedRemoteIds = <String>{};
   final Set<String> _handshakeReadyRemoteIds = <String>{};
   final Map<String, ElinkServiceDiscoveredEvent> _handshakeServiceEvents =
@@ -52,9 +53,11 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
   ElinkAdapterState _adapterState = ElinkBle.adapterStateNow;
   bool _isScanning = false;
   bool _enableTlvParse = false;
-  String? _connectedRemoteId;
-  String? _connectedMacAddress;
-  String? _bmVersion;
+  int _androidCommandResendCount = 0;
+  final Set<String> _connectedRemoteIds = <String>{};
+  final Map<String, String> _connectedMacAddresses = <String, String>{};
+  final Map<String, String> _bmVersions = <String, String>{};
+  String? _selectedRemoteId;
 
   @override
   void initState() {
@@ -63,7 +66,6 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
       ..add(
         ElinkBle.adapterState.listen((state) {
           setState(() => _adapterState = state);
-          _addLog('[adapterState] ${state.name}');
         }),
       )
       ..add(
@@ -72,7 +74,6 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
             return;
           }
           setState(() => _isScanning = isScanning);
-          _addLog('[isScanning] $isScanning');
         }),
       )
       ..add(
@@ -83,25 +84,35 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
       ..add(
         ElinkBle.connectionEvents.listen((event) {
           setState(() {
-            if (event.connectionState.isConnected) {
-              _connectedRemoteId = event.remoteId;
-              _connectedMacAddress = _scanResults
-                  .where((result) => result.device.remoteId == event.remoteId)
-                  .map((result) => result.device.macAddress)
-                  .firstWhere(
-                    (macAddress) => macAddress.isNotEmpty,
-                    orElse: () => '',
-                  );
-            } else {
-              _connectedRemoteId = null;
-              _connectedMacAddress = null;
-              _handshakeStartedRemoteIds.remove(event.remoteId);
-              _handshakeReadyRemoteIds.remove(event.remoteId);
-              _handshakeServiceEvents.remove(event.remoteId);
-              _bmVersion = null;
+            switch (event.connectionState) {
+              case ElinkConnectionState.connected:
+                _connectedRemoteIds.add(event.remoteId);
+                _selectedRemoteId = event.remoteId;
+                _connectedMacAddresses[event.remoteId] = _macAddressFor(
+                  event.remoteId,
+                );
+                break;
+              case ElinkConnectionState.disconnected:
+                _connectedRemoteIds.remove(event.remoteId);
+                _connectedMacAddresses.remove(event.remoteId);
+                _bmVersions.remove(event.remoteId);
+                _handshakeStartedRemoteIds.remove(event.remoteId);
+                _handshakeReadyRemoteIds.remove(event.remoteId);
+                _handshakeServiceEvents.remove(event.remoteId);
+                if (_selectedRemoteId == event.remoteId) {
+                  _selectedRemoteId = _connectedRemoteIds.isEmpty
+                      ? null
+                      : _connectedRemoteIds.first;
+                }
+                break;
+              case ElinkConnectionState.connecting:
+              case ElinkConnectionState.disconnecting:
+                _selectedRemoteId ??= event.remoteId;
+                break;
             }
           });
-          _addLog(
+          _addDeviceLog(
+            event.remoteId,
             '[connectionEvents] ${event.remoteId}: '
             '${event.connectionState.name}',
           );
@@ -112,7 +123,8 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
       )
       ..add(
         ElinkBle.serviceDiscoveryEvents.listen((event) {
-          _addLog(
+          _addDeviceLog(
+            event.remoteId,
             '[serviceDiscoveryEvents] ${event.remoteId}: '
             '${event.serviceUuid} '
             '${event.characteristicUuids.map((uuid) => uuid.value).join(",")}',
@@ -125,7 +137,8 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
       )
       ..add(
         ElinkBle.protocolDataPackets.listen((packet) {
-          _addLog(
+          _addDeviceLog(
+            packet.remoteId,
             '[protocolDataPackets] ${packet.remoteId}: '
             '${packet.protocol.name.toUpperCase()} '
             'payload=${ElinkDataProcessor.formatHex(packet.data)}',
@@ -135,7 +148,8 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
       )
       ..add(
         ElinkBle.passthroughDataPackets.listen((packet) {
-          _addLog(
+          _addDeviceLog(
+            packet.remoteId,
             '[passthroughDataPackets] ${packet.remoteId}: '
             '${ElinkDataProcessor.formatHex(packet.data)}',
           );
@@ -148,7 +162,8 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
       )
       ..add(
         ElinkBle.characteristicEvents.listen((event) {
-          _addLog(
+          _addDeviceLog(
+            event.remoteId,
             '[characteristicEvents] ${event.remoteId}: '
             '${event.operation.name} ${event.characteristicUuid} '
             '${ElinkDataProcessor.formatHex(event.data)}',
@@ -163,12 +178,16 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
       )
       ..add(
         ElinkBle.rssiEvents.listen((event) {
-          _addLog('[rssiEvents] ${event.remoteId}: ${event.rssi}');
+          _addDeviceLog(
+            event.remoteId,
+            '[rssiEvents] ${event.remoteId}: ${event.rssi}',
+          );
         }),
       )
       ..add(
         ElinkBle.mtuEvents.listen((event) {
-          _addLog(
+          _addDeviceLog(
+            event.remoteId,
             '[mtuEvents] ${event.remoteId}: '
             'mtu=${event.mtu} available=${event.availableMtu}',
           );
@@ -179,20 +198,29 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
           if (event.success) {
             _handshakeReadyRemoteIds.add(event.remoteId);
           }
-          _addLog('[handshakeEvents] ${event.remoteId}: ${event.success}');
+          _addDeviceLog(
+            event.remoteId,
+            '[handshakeEvents] ${event.remoteId}: ${event.success}',
+          );
         }),
       )
       ..add(
         ElinkBle.bmVersionEvents.listen((event) {
-          if (event.remoteId == _connectedRemoteId) {
-            setState(() => _bmVersion = event.version);
+          if (_connectedRemoteIds.contains(event.remoteId)) {
+            setState(() => _bmVersions[event.remoteId] = event.version);
           }
-          _addLog('[bmVersionEvents] ${event.remoteId}: ${event.version}');
+          _addDeviceLog(
+            event.remoteId,
+            '[bmVersionEvents] ${event.remoteId}: ${event.version}',
+          );
         }),
       )
       ..add(
         ElinkBle.errors.listen((error) {
-          _addLog('[errors] $error');
+          final remoteId = _remoteIdFromError(error);
+          if (remoteId != null) {
+            _addDeviceLog(remoteId, '[errors] $error');
+          }
         }),
       );
     unawaited(ElinkBle.refreshAdapterState());
@@ -223,66 +251,183 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
     );
   }
 
-  /// Build the current example page from BLE connection state (根据 BLE 连接状态构建当前示例页面).
+  /// Build the current example page from scan and connection state (根据扫描和连接状态构建当前示例页面).
   Widget _buildCurrentPage() {
-    if (_connectedRemoteId == null) {
-      return ScanPage(
-        adapterState: _adapterState,
-        isScanning: _isScanning,
-        scanResults: _scanResults,
-        onOpenBluetooth: () => unawaited(_openBluetooth()),
-        onStartScan: () => unawaited(_startScan()),
-        onStopScan: () => unawaited(_stopScan()),
-        onConnect: (device) => unawaited(_connect(device)),
-      );
+    final connectedDevices = _connectedDevices();
+    return DefaultTabController(
+      key: ValueKey<String>(
+        'tabs:${connectedDevices.length}:${_selectedRemoteId ?? ""}',
+      ),
+      length: connectedDevices.length + 1,
+      initialIndex: _initialTabIndex(connectedDevices),
+      child: Column(
+        children: [
+          TabBar(
+            isScrollable: true,
+            tabs: [
+              const Tab(icon: Icon(Icons.bluetooth_searching), text: 'Scan'),
+              ...connectedDevices.map(_buildDeviceTab),
+            ],
+          ),
+          Expanded(
+            child: TabBarView(
+              children: [
+                ScanPage(
+                  adapterState: _adapterState,
+                  isScanning: _isScanning,
+                  scanResults: _scanResults,
+                  connectedRemoteIds: _connectedRemoteIds,
+                  onOpenBluetooth: () => unawaited(_openBluetooth()),
+                  onStartScan: () => unawaited(_startScan()),
+                  onStopScan: () => unawaited(_stopScan()),
+                  onConnect: (device) => unawaited(_connect(device)),
+                  showAndroidCommandResendSetting: Platform.isAndroid,
+                  androidCommandResendCount: _androidCommandResendCount,
+                  onAndroidCommandResendCountChanged: (resendCount) {
+                    unawaited(_setAndroidCommandResendCount(resendCount));
+                  },
+                ),
+                ...connectedDevices.map(_buildDevicePage),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 计算动态 tab 初始索引，连接成功后自动切到对应设备。
+  int _initialTabIndex(List<ConnectedDeviceInfo> connectedDevices) {
+    final selectedRemoteId = _selectedRemoteId;
+    if (selectedRemoteId == null) {
+      return 0;
     }
+    final deviceIndex = connectedDevices.indexWhere(
+      (device) => device.remoteId == selectedRemoteId,
+    );
+    return deviceIndex < 0 ? 0 : deviceIndex + 1;
+  }
+
+  /// 构建单个已连接设备的 tab。
+  Tab _buildDeviceTab(ConnectedDeviceInfo device) {
+    return Tab(
+      icon: const Icon(Icons.bluetooth_connected),
+      text: _deviceTabLabel(device),
+    );
+  }
+
+  /// 构建单个已连接设备的操作页。
+  Widget _buildDevicePage(ConnectedDeviceInfo device) {
+    final remoteId = device.remoteId;
     return BluetoothConnectionPage(
-      connectedRemoteId: _connectedRemoteId,
-      connectedMacAddress: _connectedMacAddress,
-      bmVersion: _bmVersion,
+      connectedDevice: device,
       enableTlvParse: _enableTlvParse,
-      logs: _logs,
-      onDisconnect: () => unawaited(_disconnectCurrent()),
-      onGetBmVersion: () => unawaited(_getBmVersion()),
+      logs: _logsForDevice(remoteId),
+      onClearLogs: () => _clearDeviceLogs(remoteId),
+      onDisconnect: () => unawaited(_disconnectDevice(remoteId)),
+      onGetBmVersion: () => unawaited(_getBmVersion(remoteId)),
       mtuActionLabel: Platform.isIOS
           ? 'Get iOS MTU'
           : Platform.isAndroid
           ? 'Set MTU 517'
           : 'MTU',
-      onMtuAction: () => unawaited(_handleMtu()),
-      onOpenWifiProvisioning: _openWifiProvisioning,
+      onMtuAction: () => unawaited(_handleMtu(remoteId)),
+      onOpenWifiProvisioning: () => _openWifiProvisioning(remoteId),
       onEnableTlvParseChanged: (value) {
         setState(() => _enableTlvParse = value);
-        _addLog('[parseConfig] tlv=$value');
+        _addDeviceLog(remoteId, '[parseConfig] tlv=$value');
+      },
+      showAndroidCommandResendSetting: Platform.isAndroid,
+      androidCommandResendCount: _androidCommandResendCount,
+      onAndroidCommandResendCountChanged: (resendCount) {
+        unawaited(
+          _setAndroidCommandResendCount(resendCount, logRemoteId: remoteId),
+        );
       },
     );
   }
 
-  /// Connect one BLE device after stopping this example scan, and log failures (停止示例页扫描后连接单个 BLE 设备，并记录失败).
+  /// 格式化设备 tab 文案。
+  String _deviceTabLabel(ConnectedDeviceInfo device) {
+    final id = device.remoteId;
+    final shortId = id.length <= 8 ? id : id.substring(id.length - 8);
+    return device.handshakeReady ? 'Ready $shortId' : shortId;
+  }
+
+  /// Build connected device view models for the device tab (构建设备页使用的已连接设备信息).
+  List<ConnectedDeviceInfo> _connectedDevices() {
+    return _connectedRemoteIds
+        .map((remoteId) {
+          final cachedMacAddress = _connectedMacAddresses[remoteId];
+          return ConnectedDeviceInfo(
+            remoteId: remoteId,
+            macAddress: cachedMacAddress == null || cachedMacAddress.isEmpty
+                ? _macAddressFor(remoteId)
+                : cachedMacAddress,
+            bmVersion: _bmVersions[remoteId],
+            handshakeReady: _handshakeReadyRemoteIds.contains(remoteId),
+          );
+        })
+        .toList(growable: false);
+  }
+
+  /// 获取指定设备 tab 当前展示的日志列表。
+  List<String> _logsForDevice(String remoteId) {
+    return _deviceLogs[remoteId] ?? const <String>[];
+  }
+
+  /// 清空指定设备 tab 的日志，不影响其它设备页面。
+  void _clearDeviceLogs(String remoteId) {
+    setState(() => _deviceLogs.remove(remoteId));
+  }
+
+  /// Resolve one device MAC from scan cache or connected cache (从扫描缓存或连接缓存解析设备 MAC).
+  String _macAddressFor(String remoteId) {
+    for (final result in _scanResults) {
+      if (result.device.remoteId != remoteId) {
+        continue;
+      }
+      if (result.device.macAddress.isNotEmpty) {
+        return result.device.macAddress;
+      }
+      final macAddress = result.advertisementData.identity.macAddress;
+      if (macAddress.isNotEmpty) {
+        return macAddress;
+      }
+    }
+    return _connectedMacAddresses[remoteId] ?? '';
+  }
+
+  /// Connect one BLE device after stopping this example scan, and log failures (停止示例页扫描后连接一个 BLE 设备，并记录失败).
   Future<void> _connect(ElinkDevice device) async {
+    if (_connectedRemoteIds.contains(device.remoteId)) {
+      setState(() => _selectedRemoteId = device.remoteId);
+      return;
+    }
     try {
-      _connectedMacAddress = device.macAddress.isEmpty
-          ? null
-          : device.macAddress;
+      setState(() {
+        _selectedRemoteId ??= device.remoteId;
+        _connectedMacAddresses[device.remoteId] = device.macAddress;
+      });
       if (_isScanning) {
         await ElinkBle.stopScan();
       }
       await ElinkBle.connect(device);
     } catch (error) {
-      _addLog('[connect] ${device.remoteId}: $error');
+      _addDeviceLog(device.remoteId, '[connect] ${device.remoteId}: $error');
     }
   }
 
   /// 根据当前平台处理 MTU：Android 请求 517，iOS 查询最大写入长度。
-  Future<void> _handleMtu({int androidMtu = _defaultAndroidMtu}) async {
-    final remoteId = _connectedRemoteId;
-    if (remoteId == null) {
-      return;
-    }
+  Future<void> _handleMtu(
+    String remoteId, {
+    int androidMtu = _defaultAndroidMtu,
+  }) async {
     try {
       if (Platform.isIOS) {
         final mtu = await ElinkBle.getIosMtu(remoteId);
-        _addLog(
+        _addDeviceLog(
+          remoteId,
           '[getIosMtu] $remoteId: '
           'withoutResponse=${mtu.maxWriteWithoutResponse} '
           'withResponse=${mtu.maxWriteWithResponse}',
@@ -290,25 +435,54 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
         return;
       }
       if (!Platform.isAndroid) {
-        _addLog('[mtu] $remoteId: unsupported platform');
+        _addDeviceLog(remoteId, '[mtu] $remoteId: unsupported platform');
         return;
       }
       final requested = await ElinkBle.setAndroidMtu(remoteId, androidMtu);
-      _addLog(
+      _addDeviceLog(
+        remoteId,
         '[setAndroidMtu] $remoteId: '
         'mtu=$androidMtu requested=$requested',
       );
     } catch (error) {
-      _addLog('[mtu] $remoteId: $error');
+      _addDeviceLog(remoteId, '[mtu] $remoteId: $error');
     }
   }
 
-  /// Disconnect the current BLE device and log failures (断开当前 BLE 设备并记录失败).
-  Future<void> _disconnectCurrent() async {
+  /// 更新 Android 指令发送失败重发次数，0 表示关闭。
+  Future<void> _setAndroidCommandResendCount(
+    int resendCount, {
+    String? logRemoteId,
+  }) async {
+    if (resendCount < 0 || resendCount == _androidCommandResendCount) {
+      return;
+    }
+    final previousCount = _androidCommandResendCount;
+    setState(() => _androidCommandResendCount = resendCount);
     try {
-      await ElinkBle.disconnectCurrent();
+      await ElinkBle.setAndroidCommandResendCount(resendCount: resendCount);
+      if (logRemoteId != null) {
+        _addDeviceLog(logRemoteId, '[androidResend] resendCount=$resendCount');
+      }
     } catch (error) {
-      _addLog('[disconnectCurrent] $error');
+      if (mounted) {
+        setState(() => _androidCommandResendCount = previousCount);
+      }
+      if (logRemoteId != null) {
+        _addDeviceLog(
+          logRemoteId,
+          '[androidResend] resendCount=$resendCount: $error',
+        );
+      }
+    }
+  }
+
+  /// Disconnect the selected BLE device by remoteId and log failures (按 remoteId 断开选中 BLE 设备，并记录失败).
+  Future<void> _disconnectDevice(String remoteId) async {
+    try {
+      await ElinkBle.disconnect(remoteId);
+    } catch (error) {
+      _addDeviceLog(remoteId, '[disconnect] $remoteId: $error');
     }
   }
 
@@ -316,7 +490,7 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
     try {
       await ElinkBle.startScan(timeout: const Duration(seconds: 10));
     } catch (error) {
-      _addLog(error.toString());
+      debugPrint('[startScan] $error');
     }
   }
 
@@ -324,7 +498,7 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
     try {
       await ElinkBle.stopScan();
     } catch (error) {
-      _addLog(error.toString());
+      debugPrint('[stopScan] $error');
     }
   }
 
@@ -334,32 +508,25 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
       await ElinkBle.openBluetooth();
       await ElinkBle.refreshAdapterState();
     } catch (error) {
-      _addLog(error.toString());
+      debugPrint('[openBluetooth] $error');
     }
   }
 
-  Future<void> _getBmVersion() async {
-    final remoteId = _connectedRemoteId;
-    if (remoteId == null) {
-      return;
-    }
+  Future<void> _getBmVersion(String remoteId) async {
     try {
       await ElinkBle.getBmVersion(remoteId);
-      _addLog(
+      _addDeviceLog(
+        remoteId,
         '[tx][getBmVersion] $remoteId: '
         '${ElinkDataProcessor.formatHex(ElinkDataProcessor.getBmVersionPacket())}',
       );
     } catch (error) {
-      _addLog('[getBmVersion] $remoteId: $error');
+      _addDeviceLog(remoteId, '[getBmVersion] $remoteId: $error');
     }
   }
 
   /// Open the WiFi provisioning page with the connected BLE remoteId (使用当前已连接 BLE remoteId 打开 WiFi 配网页面).
-  void _openWifiProvisioning() {
-    final remoteId = _connectedRemoteId;
-    if (remoteId == null) {
-      return;
-    }
+  void _openWifiProvisioning(String remoteId) {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (context) => WifiProvisioningPage(initialRemoteId: remoteId),
@@ -379,14 +546,14 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
   Future<void> _startHandshakeIfReady(String remoteId) async {
     final event = _handshakeServiceEvents[remoteId];
     if (event == null ||
-        _connectedRemoteId != remoteId ||
+        !_connectedRemoteIds.contains(remoteId) ||
         !_handshakeStartedRemoteIds.add(remoteId)) {
       return;
     }
     try {
-      final packet = await ElinkDataProcessor.initHandshake();
+      final packet = await ElinkDataProcessor.initHandshake(remoteId: remoteId);
       if (packet == null || packet.isEmpty) {
-        _addLog('[handshake] $remoteId: init packet is empty');
+        _addDeviceLog(remoteId, '[handshake] $remoteId: init packet is empty');
         return;
       }
       await _writeData(remoteId, packet, source: 'handshake');
@@ -397,7 +564,7 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
       );
     } catch (error) {
       _handshakeStartedRemoteIds.remove(remoteId);
-      _addLog('[handshake] $remoteId: $error');
+      _addDeviceLog(remoteId, '[handshake] $remoteId: $error');
     }
   }
 
@@ -408,7 +575,10 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
   }) async {
     final bytes = List<int>.unmodifiable(data);
     await ElinkBle.write(remoteId, bytes);
-    _addLog('[tx][$source] $remoteId: ${ElinkDataProcessor.formatHex(bytes)}');
+    _addDeviceLog(
+      remoteId,
+      '[tx][$source] $remoteId: ${ElinkDataProcessor.formatHex(bytes)}',
+    );
   }
 
   /// 在 sample 的 characteristic changed 回调中处理完整 A7 原始 frame。
@@ -424,7 +594,10 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
     }
     final mac = _a7DecryptMac(event.remoteId);
     if (mac == null || mac.isEmpty) {
-      _addLog('[a7Decrypt] ${event.remoteId}: missing MAC');
+      _addDeviceLog(
+        event.remoteId,
+        '[a7Decrypt] ${event.remoteId}: missing MAC',
+      );
       return;
     }
     try {
@@ -433,13 +606,17 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
         packet: frame.rawData,
       );
       if (decrypted == null) {
-        _addLog('[a7Decrypt] ${event.remoteId}: decrypt result is null');
+        _addDeviceLog(
+          event.remoteId,
+          '[a7Decrypt] ${event.remoteId}: decrypt result is null',
+        );
         return;
       }
       final cidText = frame.cid == null
           ? '-'
           : '0x${frame.cid!.toRadixString(16).padLeft(4, '0').toUpperCase()}';
-      _addLog(
+      _addDeviceLog(
+        event.remoteId,
         '[a7Decrypt][characteristicEvents] ${event.remoteId}: '
         'cid=$cidText payload=${ElinkDataProcessor.formatHex(decrypted)}',
       );
@@ -449,7 +626,7 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
         payload: decrypted,
       );
     } catch (error) {
-      _addLog('[a7Decrypt] ${event.remoteId}: $error');
+      _addDeviceLog(event.remoteId, '[a7Decrypt] ${event.remoteId}: $error');
     }
   }
 
@@ -554,7 +731,8 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
     final cidText = frame.cid == null
         ? '-'
         : '0x${frame.cid!.toRadixString(16).padLeft(4, '0').toUpperCase()}';
-    _addLog(
+    _addDeviceLog(
+      remoteId,
       '[parse][$source] $remoteId: '
       'protocol=${frame.protocol.name.toUpperCase()} '
       'cid=$cidText len=${frame.payloadLength} '
@@ -573,7 +751,8 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
       payload.toList(growable: false),
       parseTlv: _enableTlvParse,
     );
-    _addLog(
+    _addDeviceLog(
+      remoteId,
       '[parse][$source] $remoteId: '
       '$prefix${_enableTlvParse ? 'tlv=' : 'payload='}'
       '${_formatPayloads(payloads, parseTlv: _enableTlvParse)}',
@@ -604,14 +783,56 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
         '$length, data: $data}';
   }
 
-  void _addLog(String message) {
+  /// 记录指定设备 tab 的日志，并限制单设备日志数量。
+  void _addDeviceLog(String remoteId, String message) {
     if (!mounted) return;
+    if (remoteId.isEmpty) return;
     final timestamp = ExampleTimeUtils.formatTimestamp(DateTime.now());
     setState(() {
-      _logs.add('[$timestamp] $message');
-      if (_logs.length > _maxLogCount) {
-        _logs.removeAt(0);
+      final logs = _deviceLogs.putIfAbsent(remoteId, () => <String>[]);
+      logs.add('[$timestamp] $message');
+      if (logs.length > _maxLogCount) {
+        logs.removeRange(0, logs.length - _maxLogCount);
       }
     });
+  }
+
+  /// 从错误 details 中提取 remoteId，用于把错误日志归属到对应设备 tab。
+  String? _remoteIdFromError(ElinkBleException error) {
+    final details = error.details;
+    if (details is ElinkDeviceEvent) {
+      return details.remoteId;
+    }
+    if (details is ElinkServiceDiscoveredEvent) {
+      return details.remoteId;
+    }
+    if (details is ElinkProtocolDataPacket) {
+      return details.remoteId;
+    }
+    if (details is ElinkPassthroughDataPacket) {
+      return details.remoteId;
+    }
+    if (details is ElinkCharacteristicEvent) {
+      return details.remoteId;
+    }
+    if (details is ElinkRssiEvent) {
+      return details.remoteId;
+    }
+    if (details is ElinkMtuEvent) {
+      return details.remoteId;
+    }
+    if (details is ElinkHandshakeEvent) {
+      return details.remoteId;
+    }
+    if (details is ElinkBmVersionEvent) {
+      return details.remoteId;
+    }
+    if (details is Map) {
+      final remoteId = details['remoteId']?.toString();
+      if (remoteId != null && remoteId.isNotEmpty) {
+        return remoteId;
+      }
+    }
+    return null;
   }
 }

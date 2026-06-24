@@ -311,13 +311,6 @@ class ElinkBle {
     return _platform.disconnect(remoteId);
   }
 
-  /// 断开当前连接设备。
-  /// Disconnect the current connected device.
-  static Future<void> disconnectCurrent() {
-    _ensureListening();
-    return _platform.disconnectCurrent();
-  }
-
   /// 主动读取已连接设备 RSSI，结果从 [rssiEvents] 返回。
   /// Read RSSI for a connected device; result is emitted through [rssiEvents].
   static Future<void> readRssi(String remoteId) {
@@ -359,6 +352,15 @@ class ElinkBle {
       txPhy: txPhy.value,
       rxPhy: rxPhy.value,
     );
+  }
+
+  /// Android only: 设置指令发送失败重发次数。
+  ///
+  /// [resendCount] >= 1 时开启 Android SDK 重发；传 0 关闭。默认关闭。
+  /// 传入负数时 Android native 会忽略本次配置并保持当前值不变。
+  static Future<void> setAndroidCommandResendCount({int resendCount = 0}) {
+    _ensureListening();
+    return _platform.setAndroidCommandResendCount(resendCount);
   }
 
   /// 写入 Elink packet 到设备 characteristic。
@@ -747,6 +749,7 @@ class ElinkBle {
       if (ElinkDataProcessor.isSetHandshakeCommand(a6Packet)) {
         final response = await ElinkDataProcessor.getHandshakeEncryptData(
           a6Packet,
+          remoteId: packet.remoteId,
         );
         if (response == null || response.isEmpty) return;
         await _platform.write(
@@ -756,7 +759,10 @@ class ElinkBle {
         );
       } else if (ElinkDataProcessor.isGetHandshakeCommand(a6Packet)) {
         await Future<void>.delayed(const Duration(milliseconds: 500));
-        final ready = await ElinkDataProcessor.checkHandshakeStatus(a6Packet);
+        final ready = await ElinkDataProcessor.checkHandshakeStatus(
+          a6Packet,
+          remoteId: packet.remoteId,
+        );
         _handshakeController.add(
           ElinkHandshakeEvent(remoteId: packet.remoteId, success: ready),
         );

@@ -61,20 +61,32 @@ class ElinkDataProcessor {
 
   /// 生成 handshake 首包。
   /// Build the initial handshake packet.
-  static Future<Uint8List?> initHandshake() {
-    return _platform.initHandshake();
+  static Future<Uint8List?> initHandshake({String? remoteId}) {
+    return _platform.initHandshake(remoteId: remoteId);
   }
 
   /// 根据设备下发的 handshake command 生成加密回复。
   /// Build encrypted handshake response for the device command.
-  static Future<Uint8List?> getHandshakeEncryptData(List<int> payload) {
-    return _platform.getHandshakeEncryptData(Uint8List.fromList(payload));
+  static Future<Uint8List?> getHandshakeEncryptData(
+    List<int> payload, {
+    String? remoteId,
+  }) {
+    return _platform.getHandshakeEncryptData(
+      Uint8List.fromList(payload),
+      remoteId: remoteId,
+    );
   }
 
   /// 检查 handshake 是否完成。
   /// Check whether handshake is complete.
-  static Future<bool> checkHandshakeStatus(List<int> payload) {
-    return _platform.checkHandshakeStatus(Uint8List.fromList(payload));
+  static Future<bool> checkHandshakeStatus(
+    List<int> payload, {
+    String? remoteId,
+  }) {
+    return _platform.checkHandshakeStatus(
+      Uint8List.fromList(payload),
+      remoteId: remoteId,
+    );
   }
 
   /// 生成获取 BM 模块版本的 A6 payload。
