@@ -1,4 +1,4 @@
-## 0.2.1
+## 0.2.2
 
 * Changed `ElinkBle.getBmVersion()` to send the enhanced A6 BM version command
   `0x46` instead of `0x0E`.
