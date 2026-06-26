@@ -163,11 +163,25 @@ flowchart TD
   设备 tab。
 - 发现可写 characteristic 后触发 Flutter A6 handshake。
 - BM 版本号通过 `ElinkBle.getBmVersion()` 查询，本质是发送 A6 payload
-  `0x46`。
+  `0x46`。旧版 `0x0E` 查询可使用 `ElinkBle.getLegacyBmVersion()`。
 - Android 使用 `ElinkBle.setAndroidMtu(remoteId, 517)`，结果从
   `ElinkBle.mtuEvents` 返回。
 - iOS 使用 `ElinkBle.getIosMtu(remoteId)`，读取系统当前协商出的
   `.withoutResponse` 和 `.withResponse` 最大写入长度。
+
+BM 版本查询：
+
+```dart
+// 增强版 BM 版本指令：A6 payload 0x46。
+await ElinkBle.getBmVersion(result.device.remoteId);
+
+// 旧版 BM 版本指令：A6 payload 0x0E。
+await ElinkBle.getLegacyBmVersion(result.device.remoteId);
+
+final bmVersionSub = ElinkBle.bmVersionEvents.listen((event) {
+  print('${event.remoteId}: ${event.version}');
+});
+```
 
 连接并写入数据：
 

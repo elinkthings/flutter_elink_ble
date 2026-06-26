@@ -23,6 +23,7 @@ void main() {
     var opened = false;
     var mtuRequested = false;
     var logsCleared = false;
+    var legacyBmRequested = false;
 
     await tester.pumpWidget(
       MaterialApp(
@@ -39,6 +40,7 @@ void main() {
             onClearLogs: () => logsCleared = true,
             onDisconnect: () {},
             onGetBmVersion: () {},
+            onGetLegacyBmVersion: () => legacyBmRequested = true,
             mtuActionLabel: 'Set MTU 517',
             onMtuAction: () => mtuRequested = true,
             onOpenWifiProvisioning: () => opened = true,
@@ -52,11 +54,13 @@ void main() {
     );
 
     await tester.tap(find.byIcon(Icons.wifi));
+    await tester.tap(find.text('BM 0x0E'));
     await tester.tap(find.text('Set MTU 517'));
     await tester.tap(find.byTooltip('Clear logs'));
 
     expect(opened, isTrue);
     expect(mtuRequested, isTrue);
     expect(logsCleared, isTrue);
+    expect(legacyBmRequested, isTrue);
   });
 }

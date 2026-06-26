@@ -753,8 +753,8 @@ class ElinkBmVersionEvent {
   /// BM version formatted with the AiLinkSecretFlutter common parser rules.
   final String version;
 
-  /// 原始 A6 payload，首字节为 `0x46`.
-  /// Raw A6 payload whose first byte is `0x46`.
+  /// 原始 A6 payload，首字节为 `0x46` 或旧版 `0x0E`.
+  /// Raw A6 payload whose first byte is `0x46` or legacy `0x0E`.
   final Uint8List rawPayload;
 }
 

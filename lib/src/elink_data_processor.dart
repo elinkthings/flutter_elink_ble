@@ -21,6 +21,7 @@ class ElinkDataProcessor {
   static const int setHandshake = 0x23;
   static const int getHandshake = 0x24;
   static const int getBmVersionCommand = 0x46;
+  static const int getLegacyBmVersionCommand = 0x0E;
 
   static FlutterElinkBlePlatform get _platform {
     return FlutterElinkBlePlatform.instance;
@@ -95,23 +96,59 @@ class ElinkDataProcessor {
     return const <int>[getBmVersionCommand];
   }
 
+  /// 生成获取旧版 BM 模块版本的 A6 payload。
+  /// Build the legacy A6 payload for querying the BM module version.
+  static List<int> getLegacyBmVersionPayload() {
+    return const <int>[getLegacyBmVersionCommand];
+  }
+
   /// 生成获取 BM 模块版本的完整 A6 packet，主要用于日志显示。
   /// Build the full A6 packet for querying BM version, mostly for logging.
   static List<int> getBmVersionPacket() {
     return wrapA6Frame(getBmVersionPayload());
   }
 
-  /// 解析 BM 模块版本回包；入参可为完整 A6 packet 或 A6 payload。
-  /// Parse a BM version response from either a full A6 packet or an A6 payload.
+  /// 生成获取旧版 BM 模块版本的完整 A6 packet，主要用于日志显示。
+  /// Build the full legacy A6 packet for querying BM version, mostly for logging.
+  static List<int> getLegacyBmVersionPacket() {
+    return wrapA6Frame(getLegacyBmVersionPayload());
+  }
+
+  /// 解析单包 BM 模块版本回包；入参可为完整 A6 packet 或 A6 payload。
+  /// Parse a single-packet BM version response from either a full A6 packet or an A6 payload.
   static String? parseBmVersion(List<int> data) {
     final payload = normalizeA6Payload(data);
-    if (payload.length < 10 || payload[0] != getBmVersionCommand) {
+    if (payload.isEmpty) {
+      return null;
+    }
+    if (payload[0] == getLegacyBmVersionCommand) {
+      return _parseLegacyBmVersionPayload(payload);
+    }
+    if (payload.length < 3 || payload[0] != getBmVersionCommand) {
+      return null;
+    }
+    final fragmentIndex = payload[1] & 0x0f;
+    final lastFragmentIndex = (payload[1] >> 4) & 0x0f;
+    if (fragmentIndex != 0 || lastFragmentIndex != 0) {
+      return null;
+    }
+    final versionBytes = payload.sublist(2).toList(growable: false);
+    if (versionBytes.isEmpty) {
+      return null;
+    }
+    return String.fromCharCodes(versionBytes);
+  }
+
+  /// 解析旧版 `0x0E` BM 模块版本回包。
+  /// Parse the legacy `0x0E` BM module version response.
+  static String? _parseLegacyBmVersionPayload(List<int> payload) {
+    if (payload.length < 10 || payload[0] != getLegacyBmVersionCommand) {
       return null;
     }
     final name = String.fromCharCodes([payload[1], payload[2]]);
     final model = (payload[3] & 0xff).toString().padLeft(2, '0');
     final hardware = payload[4] & 0xff;
-    final software = ((payload[5] & 0xff) / 10.0).toStringAsFixed(1);
+    final software = ((payload[5] & 0xff) / 10.0).toString();
     final custom = payload[6] & 0xff;
     final year = (payload[7] & 0xff) + 2000;
     final month = (payload[8] & 0xff).toString().padLeft(2, '0');

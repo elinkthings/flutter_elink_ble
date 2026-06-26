@@ -638,6 +638,16 @@ void main() {
     expect(fakePlatform.lastWriteA6Payload, [0x46]);
   });
 
+  test('getLegacyBmVersion sends legacy A6 common command payload', () async {
+    final fakePlatform = MockElinkBlePlatform();
+    FlutterElinkBlePlatform.instance = fakePlatform;
+
+    await ElinkBle.getLegacyBmVersion('remote-1');
+
+    expect(fakePlatform.lastWriteA6RemoteId, 'remote-1');
+    expect(fakePlatform.lastWriteA6Payload, [0x0E]);
+  });
+
   test('WiFi APIs build A6 command payloads in Dart', () async {
     final fakePlatform = MockElinkBlePlatform();
     fakePlatform.autoAckWifiCommands = true;
@@ -1335,32 +1345,122 @@ void main() {
       'protocol': 'a6',
       'data': Uint8List.fromList([
         0x46,
+        0x00,
         0x42,
-        0x4D,
-        0x03,
-        0x04,
-        0x15,
-        0x06,
-        0x18,
-        0x05,
-        0x17,
+        0x58,
+        0x30,
+        0x32,
+        0x48,
+        0x31,
+        0x53,
+        0x31,
+        0x2E,
+        0x33,
+        0x2E,
+        0x30,
+        0x5F,
+        0x32,
+        0x35,
+        0x32,
+        0x36,
+        0x30,
+        0x35,
+        0x32,
+        0x39,
       ]),
     });
 
     final event = await nextBmVersion;
     expect(event.remoteId, 'remote-1');
-    expect(event.version, 'BM03H4S2.1.6_20240523');
+    expect(event.version, 'BX02H1S1.3.0_25260529');
     expect(event.rawPayload, [
       0x46,
+      0x00,
+      0x42,
+      0x58,
+      0x30,
+      0x32,
+      0x48,
+      0x31,
+      0x53,
+      0x31,
+      0x2E,
+      0x33,
+      0x2E,
+      0x30,
+      0x5F,
+      0x32,
+      0x35,
+      0x32,
+      0x36,
+      0x30,
+      0x35,
+      0x32,
+      0x39,
+    ]);
+  });
+
+  test('event stream combines fragmented BM version payloads', () async {
+    final fakePlatform = MockElinkBlePlatform();
+    FlutterElinkBlePlatform.instance = fakePlatform;
+    final nextBmVersion = ElinkBle.bmVersionEvents.first;
+
+    fakePlatform.eventController
+      ..add({
+        'type': 'protocolData',
+        'remoteId': 'remote-1',
+        'protocol': 'a6',
+        'data': Uint8List.fromList([0x46, 0x10, ...'BX02H1S1.3'.codeUnits]),
+      })
+      ..add({
+        'type': 'protocolData',
+        'remoteId': 'remote-1',
+        'protocol': 'a6',
+        'data': Uint8List.fromList([0x46, 0x11, ...'.0_25260529'.codeUnits]),
+      });
+
+    final event = await nextBmVersion;
+    expect(event.remoteId, 'remote-1');
+    expect(event.version, 'BX02H1S1.3.0_25260529');
+  });
+
+  test('event stream parses legacy BM version payload', () async {
+    final fakePlatform = MockElinkBlePlatform();
+    FlutterElinkBlePlatform.instance = fakePlatform;
+    final nextBmVersion = ElinkBle.bmVersionEvents.first;
+
+    fakePlatform.eventController.add({
+      'type': 'protocolData',
+      'remoteId': 'remote-1',
+      'protocol': 'a6',
+      'data': Uint8List.fromList([
+        0x0E,
+        0x42,
+        0x4D,
+        0x2B,
+        0x01,
+        0x0A,
+        0x00,
+        0x18,
+        0x0A,
+        0x0A,
+      ]),
+    });
+
+    final event = await nextBmVersion;
+    expect(event.remoteId, 'remote-1');
+    expect(event.version, 'BM43H1S1.0.0_20241010');
+    expect(event.rawPayload, [
+      0x0E,
       0x42,
       0x4D,
-      0x03,
-      0x04,
-      0x15,
-      0x06,
+      0x2B,
+      0x01,
+      0x0A,
+      0x00,
       0x18,
-      0x05,
-      0x17,
+      0x0A,
+      0x0A,
     ]);
   });
 

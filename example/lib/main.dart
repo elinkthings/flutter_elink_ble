@@ -326,6 +326,7 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
       onClearLogs: () => _clearDeviceLogs(remoteId),
       onDisconnect: () => unawaited(_disconnectDevice(remoteId)),
       onGetBmVersion: () => unawaited(_getBmVersion(remoteId)),
+      onGetLegacyBmVersion: () => unawaited(_getLegacyBmVersion(remoteId)),
       mtuActionLabel: Platform.isIOS
           ? 'Get iOS MTU'
           : Platform.isAndroid
@@ -522,6 +523,20 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
       );
     } catch (error) {
       _addDeviceLog(remoteId, '[getBmVersion] $remoteId: $error');
+    }
+  }
+
+  /// 获取旧版 BM 模块版本，并记录旧版 `0x0E` 查询指令。
+  Future<void> _getLegacyBmVersion(String remoteId) async {
+    try {
+      await ElinkBle.getLegacyBmVersion(remoteId);
+      _addDeviceLog(
+        remoteId,
+        '[tx][getLegacyBmVersion] $remoteId: '
+        '${ElinkDataProcessor.formatHex(ElinkDataProcessor.getLegacyBmVersionPacket())}',
+      );
+    } catch (error) {
+      _addDeviceLog(remoteId, '[getLegacyBmVersion] $remoteId: $error');
     }
   }
 

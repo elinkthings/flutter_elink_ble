@@ -2,8 +2,14 @@
 
 * Changed `ElinkBle.getBmVersion()` to send the enhanced A6 BM version command
   `0x46` instead of `0x0E`.
-* Updated BM version parsing expectations, tests, and documentation to match
-  the `0x46` command.
+* Updated BM version parsing to read the enhanced `0x46` fragment-control byte
+  plus ASCII version payload format.
+* Added `ElinkBle.getLegacyBmVersion()` for legacy `0x0E` BM version queries
+  while keeping legacy response parsing.
+* Updated the example connection page with compact BM version actions and
+  structured BLE log rendering.
+* Updated BM version tests and documentation for both `0x46` and legacy `0x0E`
+  commands.
 
 ## 0.2.0
 

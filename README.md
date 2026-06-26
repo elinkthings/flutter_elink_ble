@@ -170,11 +170,26 @@ In the example implementation:
   provisioning, and disconnect actions target the current device tab.
 - Handshake starts after a writable characteristic is discovered.
 - BM version is queried with `ElinkBle.getBmVersion()`, which sends A6 payload
-  `0x46`.
+  `0x46`. Legacy `0x0E` queries are available through
+  `ElinkBle.getLegacyBmVersion()`.
 - Android uses `ElinkBle.setAndroidMtu(remoteId, 517)` and listens to
   `ElinkBle.mtuEvents`.
 - iOS uses `ElinkBle.getIosMtu(remoteId)` and reads the negotiated
   `.withoutResponse` and `.withResponse` maximum write lengths.
+
+BM version query:
+
+```dart
+// Enhanced BM version command: A6 payload 0x46.
+await ElinkBle.getBmVersion(result.device.remoteId);
+
+// Legacy BM version command: A6 payload 0x0E.
+await ElinkBle.getLegacyBmVersion(result.device.remoteId);
+
+final bmVersionSub = ElinkBle.bmVersionEvents.listen((event) {
+  print('${event.remoteId}: ${event.version}');
+});
+```
 
 Connect and write:
 
