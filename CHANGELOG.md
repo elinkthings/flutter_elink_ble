@@ -1,3 +1,10 @@
+## 0.2.1
+
+* Changed `ElinkBle.getBmVersion()` to send the enhanced A6 BM version command
+  `0x46` instead of `0x0E`.
+* Updated BM version parsing expectations, tests, and documentation to match
+  the `0x46` command.
+
 ## 0.2.0
 
 * **Breaking:** removed `disconnectCurrent`; disconnect a specific connection

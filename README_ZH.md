@@ -143,7 +143,7 @@ flowchart TD
   K --> L[处理 handshake response]
   L --> M[handshakeEvents: success]
   M --> N[getBmVersion]
-  N --> O[writeA6 payload 0x0E]
+  N --> O[writeA6 payload 0x46]
   O --> P[bmVersionEvents]
   M --> Q{平台 MTU 操作}
   Q -- Android --> R[setAndroidMtu 517]
@@ -163,7 +163,7 @@ flowchart TD
   设备 tab。
 - 发现可写 characteristic 后触发 Flutter A6 handshake。
 - BM 版本号通过 `ElinkBle.getBmVersion()` 查询，本质是发送 A6 payload
-  `0x0E`。
+  `0x46`。
 - Android 使用 `ElinkBle.setAndroidMtu(remoteId, 517)`，结果从
   `ElinkBle.mtuEvents` 返回。
 - iOS 使用 `ElinkBle.getIosMtu(remoteId)`，读取系统当前协商出的
@@ -280,7 +280,7 @@ ElinkBle.wifiCommandLoggingEnabled = false;
 
 ```dart
 final commonFrame = ElinkDataProcessor.parseProtocolFrame(
-  ElinkDataProcessor.wrapA6Frame([0x0E]),
+  ElinkDataProcessor.wrapA6Frame([0x46]),
 );
 print('${commonFrame.protocol.name} ${commonFrame.payload}');
 

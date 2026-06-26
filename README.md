@@ -149,7 +149,7 @@ flowchart TD
   K --> L[handle handshake response]
   L --> M[handshakeEvents: success]
   M --> N[getBmVersion]
-  N --> O[writeA6 payload 0x0E]
+  N --> O[writeA6 payload 0x46]
   O --> P[bmVersionEvents]
   M --> Q{Platform MTU action}
   Q -- Android --> R[setAndroidMtu 517]
@@ -170,7 +170,7 @@ In the example implementation:
   provisioning, and disconnect actions target the current device tab.
 - Handshake starts after a writable characteristic is discovered.
 - BM version is queried with `ElinkBle.getBmVersion()`, which sends A6 payload
-  `0x0E`.
+  `0x46`.
 - Android uses `ElinkBle.setAndroidMtu(remoteId, 517)` and listens to
   `ElinkBle.mtuEvents`.
 - iOS uses `ElinkBle.getIosMtu(remoteId)` and reads the negotiated
@@ -285,7 +285,7 @@ Generic A6/A7 frame parsing and A7/TLV packet building:
 
 ```dart
 final commonFrame = ElinkDataProcessor.parseProtocolFrame(
-  ElinkDataProcessor.wrapA6Frame([0x0E]),
+  ElinkDataProcessor.wrapA6Frame([0x46]),
 );
 print('${commonFrame.protocol.name} ${commonFrame.payload}');
 

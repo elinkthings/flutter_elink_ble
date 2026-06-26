@@ -635,7 +635,7 @@ void main() {
     await ElinkBle.getBmVersion('remote-1');
 
     expect(fakePlatform.lastWriteA6RemoteId, 'remote-1');
-    expect(fakePlatform.lastWriteA6Payload, [0x0E]);
+    expect(fakePlatform.lastWriteA6Payload, [0x46]);
   });
 
   test('WiFi APIs build A6 command payloads in Dart', () async {
@@ -1334,7 +1334,7 @@ void main() {
       'remoteId': 'remote-1',
       'protocol': 'a6',
       'data': Uint8List.fromList([
-        0x0E,
+        0x46,
         0x42,
         0x4D,
         0x03,
@@ -1351,7 +1351,7 @@ void main() {
     expect(event.remoteId, 'remote-1');
     expect(event.version, 'BM03H4S2.1.6_20240523');
     expect(event.rawPayload, [
-      0x0E,
+      0x46,
       0x42,
       0x4D,
       0x03,
@@ -1377,7 +1377,7 @@ void main() {
         0xA6,
         0xA6,
         0x0A,
-        0x0E,
+        0x46,
         0x42,
         0x58,
         0x02,
@@ -1387,14 +1387,14 @@ void main() {
         0x1A,
         0x04,
         0x19,
-        0xF9,
+        0x31,
         0x6A,
       ]),
     });
 
     final packet = await nextProtocol;
     expect(packet.data, [
-      0x0E,
+      0x46,
       0x42,
       0x58,
       0x02,

@@ -233,8 +233,8 @@ class ElinkBle {
     return _handshakeController.stream;
   }
 
-  /// BM 模块版本回调 stream，由 A6 `0x0E` 回包解析得到。
-  /// BM module version stream parsed from A6 `0x0E` responses.
+  /// BM 模块版本回调 stream，由 A6 `0x46` 回包解析得到。
+  /// BM module version stream parsed from A6 `0x46` responses.
   static Stream<ElinkBmVersionEvent> get bmVersionEvents {
     _ensureListening();
     return _bmVersionController.stream;
@@ -388,8 +388,8 @@ class ElinkBle {
     );
   }
 
-  /// 通过 A6 `0x0E` 查询 BM 模块版本。
-  /// Query the BM module version with A6 command `0x0E`.
+  /// 通过 A6 `0x46` 查询 BM 模块版本。
+  /// Query the BM module version with A6 command `0x46`.
   ///
   /// 回包会从 [bmVersionEvents] 返回。
   /// The response is emitted through [bmVersionEvents].

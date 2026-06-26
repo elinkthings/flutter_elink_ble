@@ -20,7 +20,7 @@ class ElinkDataProcessor {
   static const int a7End = 0x7A;
   static const int setHandshake = 0x23;
   static const int getHandshake = 0x24;
-  static const int getBmVersionCommand = 0x0E;
+  static const int getBmVersionCommand = 0x46;
 
   static FlutterElinkBlePlatform get _platform {
     return FlutterElinkBlePlatform.instance;
