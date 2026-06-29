@@ -33,6 +33,8 @@ class ElinkWifi {
   static final Map<String, String> _scanSsidByNumber = <String, String>{};
   static final Map<String, Map<String, Object?>> _scanInfoByNumber =
       <String, Map<String, Object?>>{};
+  static final Map<String, ElinkWifiStatusEvent> _latestStatusByRemoteId =
+      <String, ElinkWifiStatusEvent>{};
   static StreamSubscription<Map<dynamic, dynamic>>? _eventSubscription;
   static final Map<String, DateTime> _recentNativeEventTimes =
       <String, DateTime>{};
@@ -330,6 +332,7 @@ class ElinkWifi {
     _scanResults.clear();
     _scanSsidByNumber.clear();
     _scanInfoByNumber.clear();
+    _latestStatusByRemoteId.clear();
     _recentNativeEventTimes.clear();
     _recentEmittedEventTimes.clear();
     _recentStatusEventTimes.clear();
@@ -546,23 +549,39 @@ class ElinkWifi {
   ///
   /// [event] is the WiFi status event map (WiFi 状态 event map).
   static void _handleStatusEvent(Map<dynamic, dynamic> event) {
-    if (_isDuplicateStatusEvent(event)) {
+    final status = ElinkWifiStatusEvent.fromMap(event);
+    if (_isDuplicateStatusEvent(status)) {
       return;
     }
-    _statusController.add(ElinkWifiStatusEvent.fromMap(event));
-    _emitEvent(event);
+    _latestStatusByRemoteId[status.remoteId] = status;
+    _statusController.add(status);
+    _emitEvent(_statusEventMap(status));
+  }
+
+  /// 将 WiFi 状态模型还原为通用事件 map。
+  ///
+  /// [status] is the normalized WiFi status event (规整后的 WiFi 状态事件).
+  static Map<String, Object?> _statusEventMap(ElinkWifiStatusEvent status) {
+    return <String, Object?>{
+      'type': 'wifiStatus',
+      'remoteId': status.remoteId,
+      'bleStatus': status.rawBleStatus,
+      'wifiStatus': status.rawWifiStatus,
+      'workStatus': status.rawWorkStatus,
+      if (status.rawFailStatus != null) 'failStatus': status.rawFailStatus,
+    };
   }
 
   /// 判断 WiFi 状态事件是否为短时间内重复回调。
   ///
-  /// [event] is the WiFi status event map (WiFi 状态 event map).
-  static bool _isDuplicateStatusEvent(Map<dynamic, dynamic> event) {
+  /// [event] is the normalized WiFi status event (规整后的 WiFi 状态事件).
+  static bool _isDuplicateStatusEvent(ElinkWifiStatusEvent event) {
     final key = [
-      event['remoteId'],
-      event['bleStatus'],
-      event['wifiStatus'],
-      event['workStatus'],
-      event['failStatus'],
+      event.remoteId,
+      event.rawBleStatus,
+      event.wifiStatus.value,
+      event.rawWorkStatus,
+      event.rawFailStatus,
     ].join('|');
     final now = DateTime.now();
     _recentStatusEventTimes.removeWhere(
@@ -644,15 +663,7 @@ class ElinkWifi {
         _handleTextPayload(remoteId, payload, 'wifiServerPath');
         break;
       case 0xAB:
-        if (payload.length < 2) return;
-        _handleStatusEvent(<String, Object?>{
-          'type': 'wifiStatus',
-          'remoteId': remoteId,
-          'bleStatus': 0,
-          'wifiStatus': 1,
-          'workStatus': 0,
-          'failStatus': payload[1],
-        });
+        _handleConnectFailPayload(remoteId, payload);
         break;
     }
   }
@@ -672,8 +683,27 @@ class ElinkWifi {
       'remoteId': remoteId,
       'bleStatus': packedStatus & 0x0f,
       'wifiStatus': (packedStatus & 0xf0) >> 4,
-      'workStatus': payload[2],
-      'failStatus': payload.length > 3 ? payload[3] : null,
+      'workStatus': payload[2] & 0xff,
+    });
+  }
+
+  /// 解析 `0xAB` WiFi 连接 AP 失败原因回包。
+  ///
+  /// [remoteId] is the native remote identifier for the event device (事件所属设备的 native remote identifier).
+  ///
+  /// [payload] is a `0xAB` WiFi connection failure payload (0xAB WiFi 连接失败原因 payload).
+  static void _handleConnectFailPayload(String remoteId, List<int> payload) {
+    if (payload.length < 2) {
+      return;
+    }
+    final latestStatus = _latestStatusByRemoteId[remoteId];
+    _handleStatusEvent(<String, Object?>{
+      'type': 'wifiStatus',
+      'remoteId': remoteId,
+      'bleStatus': latestStatus?.rawBleStatus,
+      'wifiStatus': ElinkWifiConnectionStatus.connectApFail.value,
+      'workStatus': latestStatus?.rawWorkStatus,
+      'failStatus': payload[1] & 0xff,
     });
   }
 

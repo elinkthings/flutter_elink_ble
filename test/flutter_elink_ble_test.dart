@@ -932,11 +932,111 @@ void main() {
     expect(results.single.securityType, ElinkWifiSecurityType.wpa2Psk);
     expect(results.single.useState, ElinkWifiUseState.saved);
     expect(status.wifiStatus, ElinkWifiConnectionStatus.connectedAp);
-    expect(status.failStatus, ElinkWifiConnectFailCode.wrongPassword);
+    expect(status.failStatus, isNull);
     expect(status.rawWifiStatus, 3);
-    expect(status.rawFailStatus, 2);
+    expect(status.rawFailStatus, isNull);
     expect(response.command, 0x88);
     expect(response.status, ElinkWifiCommandStatus.success);
+  });
+
+  test('WiFi 0x26 status follows the protocol bit layout', () async {
+    final fakePlatform = MockElinkBlePlatform();
+    FlutterElinkBlePlatform.instance = fakePlatform;
+    final nextStatus = ElinkBle.wifiStatusEvents.first;
+
+    fakePlatform.eventController.add({
+      'type': 'protocolData',
+      'remoteId': 'remote-status-protocol',
+      'protocol': 'a6',
+      'data': Uint8List.fromList([0x26, 0x12, 0x02, 0x03]),
+    });
+
+    final status = await nextStatus;
+
+    expect(status.bleStatus, ElinkWifiBleStatus.paired);
+    expect(status.wifiStatus, ElinkWifiConnectionStatus.connectApFail);
+    expect(status.workStatus, ElinkWifiWorkStatus.ready);
+    expect(status.failStatus, isNull);
+    expect(status.rawBleStatus, 2);
+    expect(status.rawWifiStatus, 1);
+    expect(status.rawWorkStatus, 2);
+    expect(status.rawFailStatus, isNull);
+  });
+
+  test('WiFi 0xAB failure reason is merged into status events', () async {
+    final fakePlatform = MockElinkBlePlatform();
+    FlutterElinkBlePlatform.instance = fakePlatform;
+    final statuses = <ElinkWifiStatusEvent>[];
+    final statusSubscription = ElinkBle.wifiStatusEvents.listen(statuses.add);
+
+    fakePlatform.eventController
+      ..add({
+        'type': 'protocolData',
+        'remoteId': 'remote-connect-fail',
+        'protocol': 'a6',
+        'data': Uint8List.fromList([0x26, 0x12, 0x02]),
+      })
+      ..add({
+        'type': 'protocolData',
+        'remoteId': 'remote-connect-fail',
+        'protocol': 'a6',
+        'data': Uint8List.fromList([0xAB, 0x02, 0x00]),
+      });
+
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    await statusSubscription.cancel();
+
+    expect(statuses, hasLength(2));
+    expect(statuses.first.failStatus, isNull);
+    expect(statuses.last.bleStatus, ElinkWifiBleStatus.paired);
+    expect(statuses.last.wifiStatus, ElinkWifiConnectionStatus.connectApFail);
+    expect(statuses.last.workStatus, ElinkWifiWorkStatus.ready);
+    expect(statuses.last.failStatus, ElinkWifiConnectFailCode.wrongPassword);
+    expect(statuses.last.rawFailStatus, 2);
+  });
+
+  test('WiFi 0xAB without previous status uses unknown context', () async {
+    final fakePlatform = MockElinkBlePlatform();
+    FlutterElinkBlePlatform.instance = fakePlatform;
+    final nextStatus = ElinkBle.wifiStatusEvents.first;
+
+    fakePlatform.eventController.add({
+      'type': 'protocolData',
+      'remoteId': 'remote-fail-only',
+      'protocol': 'a6',
+      'data': Uint8List.fromList([0xAB, 0x03, 0x00]),
+    });
+
+    final status = await nextStatus;
+
+    expect(status.bleStatus, ElinkWifiBleStatus.unknown);
+    expect(status.wifiStatus, ElinkWifiConnectionStatus.connectApFail);
+    expect(status.workStatus, ElinkWifiWorkStatus.unknown);
+    expect(status.failStatus, ElinkWifiConnectFailCode.noIp);
+    expect(status.rawFailStatus, 3);
+  });
+
+  test('WiFi legacy native failure status is normalized', () async {
+    final fakePlatform = MockElinkBlePlatform();
+    FlutterElinkBlePlatform.instance = fakePlatform;
+    final nextStatus = ElinkBle.wifiStatusEvents.first;
+
+    fakePlatform.eventController.add({
+      'type': 'wifiStatus',
+      'remoteId': 'remote-legacy-fail',
+      'bleStatus': 2,
+      'wifiStatus': 6,
+      'workStatus': 2,
+    });
+
+    final status = await nextStatus;
+
+    expect(status.bleStatus, ElinkWifiBleStatus.paired);
+    expect(status.wifiStatus, ElinkWifiConnectionStatus.connectApFail);
+    expect(status.workStatus, ElinkWifiWorkStatus.ready);
+    expect(status.failStatus, ElinkWifiConnectFailCode.wrongPassword);
+    expect(status.rawWifiStatus, 6);
+    expect(status.rawFailStatus, 2);
   });
 
   test('WiFi scan protocol payloads are parsed in Dart', () async {

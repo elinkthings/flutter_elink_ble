@@ -254,7 +254,8 @@ final wifiStatusSub = ElinkBle.wifiStatusEvents.listen((status) {
   print(
     'ble=${status.bleStatus.name} '
     'wifi=${status.wifiStatus.name} '
-    'work=${status.workStatus.name}',
+    'work=${status.workStatus.name} '
+    "fail=${status.failStatus?.name ?? '-'}",
   );
 });
 

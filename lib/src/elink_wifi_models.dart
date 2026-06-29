@@ -166,16 +166,19 @@ enum ElinkWifiConnectionStatus {
   /// Connecting to the WiFi access point.
   connectingAp(4),
 
-  /// WiFi 热点信号较差。
-  /// WiFi access point signal is poor.
+  /// 兼容历史 native SDK 的热点信号差状态；新协议失败原因由 [ElinkWifiConnectFailCode] 表示。
+  /// Legacy native SDK status for poor AP signal; the current protocol reports it through [ElinkWifiConnectFailCode].
+  @Deprecated('Use ElinkWifiConnectFailCode.apSignalBad instead.')
   poorApSignal(5),
 
-  /// WiFi 密码错误。
-  /// WiFi password is wrong.
+  /// 兼容历史 native SDK 的密码错误状态；新协议失败原因由 [ElinkWifiConnectFailCode] 表示。
+  /// Legacy native SDK status for wrong password; the current protocol reports it through [ElinkWifiConnectFailCode].
+  @Deprecated('Use ElinkWifiConnectFailCode.wrongPassword instead.')
   passwordWrong(6),
 
-  /// 无法获取 IP 地址。
-  /// Failed to obtain an IP address.
+  /// 兼容历史 native SDK 的获取 IP 失败状态；新协议失败原因由 [ElinkWifiConnectFailCode] 表示。
+  /// Legacy native SDK status for IP acquisition failure; the current protocol reports it through [ElinkWifiConnectFailCode].
+  @Deprecated('Use ElinkWifiConnectFailCode.noIp instead.')
   cantGetIp(7),
 
   /// 未知 WiFi 连接状态。
@@ -191,11 +194,16 @@ enum ElinkWifiConnectionStatus {
   /// Convert a native numeric value to an enum value (将 native 数值转为枚举值).
   static ElinkWifiConnectionStatus fromValue(Object? value) {
     final intValue = (value as num?)?.toInt();
+    if (_legacyFailureValues.contains(intValue)) {
+      return ElinkWifiConnectionStatus.connectApFail;
+    }
     return ElinkWifiConnectionStatus.values.firstWhere(
       (status) => status.value == intValue,
       orElse: () => ElinkWifiConnectionStatus.unknown,
     );
   }
+
+  static const Set<int> _legacyFailureValues = <int>{5, 6, 7};
 }
 
 /// WiFi module work status (WiFi 模块工作状态).
@@ -270,6 +278,18 @@ enum ElinkWifiConnectFailCode {
       (code) => code.value == intValue,
       orElse: () => ElinkWifiConnectFailCode.unknown,
     );
+  }
+
+  /// 将历史 native SDK 混入 WiFi 状态的失败值转换为协议定义的失败原因。
+  /// Converts legacy native SDK WiFi status values into protocol-defined failure reasons.
+  static ElinkWifiConnectFailCode? fromLegacyWifiStatus(Object? value) {
+    final intValue = (value as num?)?.toInt();
+    return switch (intValue) {
+      5 => ElinkWifiConnectFailCode.apSignalBad,
+      6 => ElinkWifiConnectFailCode.wrongPassword,
+      7 => ElinkWifiConnectFailCode.noIp,
+      _ => null,
+    };
   }
 }
 
@@ -394,11 +414,18 @@ class ElinkWifiStatusEvent {
     final bleStatus = (map['bleStatus'] as num?)?.toInt();
     final wifiStatus = (map['wifiStatus'] as num?)?.toInt();
     final workStatus = (map['workStatus'] as num?)?.toInt();
-    final failStatus = (map['failStatus'] as num?)?.toInt();
+    final normalizedWifiStatus = ElinkWifiConnectionStatus.fromValue(
+      wifiStatus,
+    );
+    final failStatus = _normalizedFailStatus(
+      rawWifiStatus: wifiStatus,
+      rawFailStatus: (map['failStatus'] as num?)?.toInt(),
+      normalizedWifiStatus: normalizedWifiStatus,
+    );
     return ElinkWifiStatusEvent(
       remoteId: map['remoteId']?.toString() ?? '',
       bleStatus: ElinkWifiBleStatus.fromValue(bleStatus),
-      wifiStatus: ElinkWifiConnectionStatus.fromValue(wifiStatus),
+      wifiStatus: normalizedWifiStatus,
       workStatus: ElinkWifiWorkStatus.fromValue(workStatus),
       failStatus: failStatus == null
           ? null
@@ -408,6 +435,25 @@ class ElinkWifiStatusEvent {
       rawWorkStatus: workStatus,
       rawFailStatus: failStatus,
     );
+  }
+
+  /// 按新协议规整失败原因：只有连接 AP 失败时才保留失败原因。
+  /// Normalizes the failure reason so it is only kept for AP connection failure.
+  static int? _normalizedFailStatus({
+    required int? rawWifiStatus,
+    required int? rawFailStatus,
+    required ElinkWifiConnectionStatus normalizedWifiStatus,
+  }) {
+    final legacyFailStatus = ElinkWifiConnectFailCode.fromLegacyWifiStatus(
+      rawWifiStatus,
+    );
+    if (legacyFailStatus != null) {
+      return legacyFailStatus.value;
+    }
+    if (normalizedWifiStatus != ElinkWifiConnectionStatus.connectApFail) {
+      return null;
+    }
+    return rawFailStatus;
   }
 }
 
