@@ -133,6 +133,13 @@ void main() {
     expect(calls[1].arguments['cid'], 0x1234);
   });
 
+  test('BM version queries use native method channel contract', () async {
+    await platform.getBmVersion('remote');
+
+    expect(calls.map((call) => call.method), ['getBmVersion']);
+    expect(calls[0].arguments['remoteId'], 'remote');
+  });
+
   test('handshake methods forward remoteId context', () async {
     await platform.initHandshake(remoteId: 'remote');
     await platform.getHandshakeEncryptData(

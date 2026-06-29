@@ -103,6 +103,11 @@ abstract class FlutterElinkBlePlatform extends PlatformInterface {
     throw UnimplementedError('writeA6() has not been implemented.');
   }
 
+  /// 通过 native SDK 增强版 `0x46` 指令查询 BM 版本。
+  Future<void> getBmVersion(String remoteId) {
+    throw UnimplementedError('getBmVersion() has not been implemented.');
+  }
+
   Future<void> writeA7({
     required String remoteId,
     required Uint8List payload,

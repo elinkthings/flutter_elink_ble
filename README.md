@@ -26,7 +26,7 @@ WiFi provisioning commands are built in Dart and sent through the shared `writeA
 - Configure Android SDK command resend count from Flutter. It is disabled by
   default and enabled when `resendCount >= 1`.
 - Run WiFi provisioning commands from Dart and listen for typed WiFi events.
-- Use native SDK helpers for broadcast decrypt and MCU A7 encrypt/decrypt; handshake is handled uniformly in the Flutter A6 data layer.
+- Use native SDK helpers for broadcast decrypt, MCU A7 encrypt/decrypt, and handshake; Flutter only bridges the native handshake result.
 
 ## Installation
 
@@ -130,7 +130,7 @@ await ElinkBle.startScan(
 
 ## Example BLE Flow
 
-The example app follows this order for scanning, connecting, handshake, BM
+The example app follows this order for scanning, connecting, native handshake, BM
 version, and MTU handling:
 
 ```mermaid
@@ -141,21 +141,16 @@ flowchart TD
   D --> E[open device tab]
   E --> F[connectionEvents: connected]
   F --> G[serviceDiscoveryEvents]
-  G --> H{write characteristic ready?}
-  H -- no --> G
-  H -- yes --> I[initHandshake]
-  I --> J[write handshake A6 packet]
-  J --> K[protocolDataPackets]
-  K --> L[handle handshake response]
-  L --> M[handshakeEvents: success]
-  M --> N[getBmVersion]
-  N --> O[writeA6 payload 0x46]
-  O --> P[bmVersionEvents]
-  M --> Q{Platform MTU action}
-  Q -- Android --> R[setAndroidMtu 517]
-  R --> S[mtuEvents]
-  Q -- iOS --> T[getIosMtu]
-  T --> U[withoutResponse / withResponse lengths]
+  G --> H[native SDK handshake]
+  H --> I[handshakeEvents: success]
+  I --> J[getBmVersion]
+  J --> K[native get BM version 0x46]
+  K --> L[bmVersionEvents]
+  I --> M{Platform MTU action}
+  M -- Android --> N[setAndroidMtu 517]
+  N --> O[mtuEvents]
+  M -- iOS --> P[getIosMtu]
+  P --> Q[withoutResponse / withResponse lengths]
 ```
 
 In the example implementation:
@@ -168,10 +163,14 @@ In the example implementation:
   tab per connected device and automatically switches to the new tab.
 - Device operations are routed by `remoteId`, so writes, MTU, RSSI, WiFi
   provisioning, and disconnect actions target the current device tab.
-- Handshake starts after a writable characteristic is discovered.
-- BM version is queried with `ElinkBle.getBmVersion()`, which sends A6 payload
-  `0x46`. Legacy `0x0E` queries are available through
-  `ElinkBle.getLegacyBmVersion()`.
+- Handshake is handled automatically by the native Android/iOS SDKs; results are
+  emitted through `ElinkBle.handshakeEvents`.
+- BM version is queried with `ElinkBle.getBmVersion()`, which calls the native
+  SDK enhanced `0x46` query (`getBleVersion46` on Android and
+  `GetBMVersionPro` on iOS). The Android native SDK only auto-reads the legacy
+  `0x0E` version, so the enhanced `0x46` query remains an explicit Flutter API.
+  Native legacy `0x0E` reports are still bridged through `bmVersionEvents` when
+  the native SDK emits them.
 - Android uses `ElinkBle.setAndroidMtu(remoteId, 517)` and listens to
   `ElinkBle.mtuEvents`.
 - iOS uses `ElinkBle.getIosMtu(remoteId)` and reads the negotiated
@@ -180,16 +179,20 @@ In the example implementation:
 BM version query:
 
 ```dart
-// Enhanced BM version command: A6 payload 0x46.
+// Enhanced BM version command: native SDK query 0x46.
 await ElinkBle.getBmVersion(result.device.remoteId);
 
-// Legacy BM version command: A6 payload 0x0E.
-await ElinkBle.getLegacyBmVersion(result.device.remoteId);
-
 final bmVersionSub = ElinkBle.bmVersionEvents.listen((event) {
-  print('${event.remoteId}: ${event.version}');
+  print(
+    '${event.remoteId}: '
+    'command=0x${event.command.toRadixString(16).padLeft(2, '0').toUpperCase()} '
+    'type=${event.versionKind} '
+    'version=${event.version}',
+  );
 });
 ```
+
+<p><font color="red"><strong>Android note:</strong> Some Android BLE modules only return the BM version after the GATT MTU has been negotiated. If <code>bmVersionEvents</code> is not emitted after <code>ElinkBle.getBmVersion()</code>, call <code>ElinkBle.setAndroidMtu(remoteId, 517)</code> after connection/service discovery, wait for <code>ElinkBle.mtuEvents</code>, then query the BM version again.</font></p>
 
 Connect and write:
 
@@ -405,7 +408,8 @@ Native events are normalized into these Dart streams:
 | `characteristicEvent` | `ElinkBle.characteristicEvents` | Low-level read, write, descriptor write, changed, or notification-state event |
 | `rssi` | `ElinkBle.rssiEvents` | Connected-device RSSI read result |
 | `mtu` | `ElinkBle.mtuEvents` | Android MTU change result |
-| `handshake` | `ElinkBle.handshakeEvents` | Handshake result handled uniformly in the Flutter A6 layer |
+| `handshake` | `ElinkBle.handshakeEvents` | Native SDK handshake result |
+| `bmVersion` | `ElinkBle.bmVersionEvents` | Native SDK BM version result |
 | `error` | `ElinkBle.errors` | Plugin error |
 
 WiFi-specific Dart streams:

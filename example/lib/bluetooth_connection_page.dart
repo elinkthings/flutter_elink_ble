@@ -14,7 +14,6 @@ class BluetoothConnectionPage extends StatelessWidget {
     required this.onClearLogs,
     required this.onDisconnect,
     required this.onGetBmVersion,
-    required this.onGetLegacyBmVersion,
     required this.mtuActionLabel,
     required this.onMtuAction,
     required this.onOpenWifiProvisioning,
@@ -41,9 +40,6 @@ class BluetoothConnectionPage extends StatelessWidget {
 
   /// Callback for querying BM module version (查询 BM 模块版本的回调).
   final VoidCallback onGetBmVersion;
-
-  /// 查询旧版 BM 模块版本的回调。
-  final VoidCallback onGetLegacyBmVersion;
 
   /// MTU 操作按钮文案，Android 设置 MTU，iOS 查询最大写入长度。
   /// MTU action button text; Android sets MTU, iOS reads maximum write length.
@@ -199,11 +195,6 @@ class BluetoothConnectionPage extends StatelessWidget {
           onPressed: onGetBmVersion,
           icon: const Icon(Icons.info_outline),
           label: const Text('BM 0x46'),
-        ),
-        FilledButton.tonalIcon(
-          onPressed: onGetLegacyBmVersion,
-          icon: const Icon(Icons.history),
-          label: const Text('BM 0x0E'),
         ),
         FilledButton.tonalIcon(
           onPressed: onMtuAction,

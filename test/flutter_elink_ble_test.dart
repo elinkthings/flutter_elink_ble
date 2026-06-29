@@ -34,6 +34,7 @@ class MockElinkBlePlatform
   String? lastWriteA6RemoteId;
   Uint8List lastWriteA6Payload = Uint8List(0);
   final List<Uint8List> writeA6Payloads = <Uint8List>[];
+  String? lastGetBmVersionRemoteId;
   bool autoAckWifiCommands = false;
   String? lastWriteA7RemoteId;
   Uint8List lastWriteA7Payload = Uint8List(0);
@@ -148,6 +149,11 @@ class MockElinkBlePlatform
     if (autoAckWifiCommands) {
       _emitWifiAck(remoteId, payload);
     }
+  }
+
+  @override
+  Future<void> getBmVersion(String remoteId) async {
+    lastGetBmVersionRemoteId = remoteId;
   }
 
   /// 模拟 WiFi 配网类命令的成功 ACK 回包。
@@ -628,24 +634,14 @@ void main() {
     );
   });
 
-  test('getBmVersion sends A6 common command payload', () async {
+  test('getBmVersion uses native enhanced BM version query', () async {
     final fakePlatform = MockElinkBlePlatform();
     FlutterElinkBlePlatform.instance = fakePlatform;
 
     await ElinkBle.getBmVersion('remote-1');
 
-    expect(fakePlatform.lastWriteA6RemoteId, 'remote-1');
-    expect(fakePlatform.lastWriteA6Payload, [0x46]);
-  });
-
-  test('getLegacyBmVersion sends legacy A6 common command payload', () async {
-    final fakePlatform = MockElinkBlePlatform();
-    FlutterElinkBlePlatform.instance = fakePlatform;
-
-    await ElinkBle.getLegacyBmVersion('remote-1');
-
-    expect(fakePlatform.lastWriteA6RemoteId, 'remote-1');
-    expect(fakePlatform.lastWriteA6Payload, [0x0E]);
+    expect(fakePlatform.lastGetBmVersionRemoteId, 'remote-1');
+    expect(fakePlatform.lastWriteA6RemoteId, isNull);
   });
 
   test('WiFi APIs build A6 command payloads in Dart', () async {
@@ -1434,46 +1430,12 @@ void main() {
     expect(event.availableMtu, 244);
   });
 
-  test('event stream parses BM version from A6 payload', () async {
+  test('event stream emits native enhanced BM version', () async {
     final fakePlatform = MockElinkBlePlatform();
     FlutterElinkBlePlatform.instance = fakePlatform;
     final nextBmVersion = ElinkBle.bmVersionEvents.first;
 
-    fakePlatform.eventController.add({
-      'type': 'protocolData',
-      'remoteId': 'remote-1',
-      'protocol': 'a6',
-      'data': Uint8List.fromList([
-        0x46,
-        0x00,
-        0x42,
-        0x58,
-        0x30,
-        0x32,
-        0x48,
-        0x31,
-        0x53,
-        0x31,
-        0x2E,
-        0x33,
-        0x2E,
-        0x30,
-        0x5F,
-        0x32,
-        0x35,
-        0x32,
-        0x36,
-        0x30,
-        0x35,
-        0x32,
-        0x39,
-      ]),
-    });
-
-    final event = await nextBmVersion;
-    expect(event.remoteId, 'remote-1');
-    expect(event.version, 'BX02H1S1.3.0_25260529');
-    expect(event.rawPayload, [
+    final rawPayload = Uint8List.fromList([
       0x46,
       0x00,
       0x42,
@@ -1498,59 +1460,50 @@ void main() {
       0x32,
       0x39,
     ]);
-  });
-
-  test('event stream combines fragmented BM version payloads', () async {
-    final fakePlatform = MockElinkBlePlatform();
-    FlutterElinkBlePlatform.instance = fakePlatform;
-    final nextBmVersion = ElinkBle.bmVersionEvents.first;
-
-    fakePlatform.eventController
-      ..add({
-        'type': 'protocolData',
-        'remoteId': 'remote-1',
-        'protocol': 'a6',
-        'data': Uint8List.fromList([0x46, 0x10, ...'BX02H1S1.3'.codeUnits]),
-      })
-      ..add({
-        'type': 'protocolData',
-        'remoteId': 'remote-1',
-        'protocol': 'a6',
-        'data': Uint8List.fromList([0x46, 0x11, ...'.0_25260529'.codeUnits]),
-      });
+    fakePlatform.eventController.add({
+      'type': 'bmVersion',
+      'remoteId': 'remote-1',
+      'version': 'BX02H1S1.3.0_25260529',
+      'command': 0x46,
+      'rawPayload': rawPayload,
+    });
 
     final event = await nextBmVersion;
     expect(event.remoteId, 'remote-1');
     expect(event.version, 'BX02H1S1.3.0_25260529');
+    expect(event.command, 0x46);
+    expect(event.isEnhancedCommand, isTrue);
+    expect(event.isLegacyCommand, isFalse);
+    expect(event.versionKind, 'new');
+    expect(event.rawPayload, rawPayload);
   });
 
-  test('event stream parses legacy BM version payload', () async {
+  test('native BM version event defaults raw payload to command', () async {
     final fakePlatform = MockElinkBlePlatform();
     FlutterElinkBlePlatform.instance = fakePlatform;
     final nextBmVersion = ElinkBle.bmVersionEvents.first;
 
     fakePlatform.eventController.add({
-      'type': 'protocolData',
+      'type': 'bmVersion',
       'remoteId': 'remote-1',
-      'protocol': 'a6',
-      'data': Uint8List.fromList([
-        0x0E,
-        0x42,
-        0x4D,
-        0x2B,
-        0x01,
-        0x0A,
-        0x00,
-        0x18,
-        0x0A,
-        0x0A,
-      ]),
+      'version': 'BX02H1S1.3.0_25260529',
+      'command': 0x46,
     });
 
     final event = await nextBmVersion;
     expect(event.remoteId, 'remote-1');
-    expect(event.version, 'BM43H1S1.0.0_20241010');
-    expect(event.rawPayload, [
+    expect(event.version, 'BX02H1S1.3.0_25260529');
+    expect(event.command, 0x46);
+    expect(event.versionKind, 'new');
+    expect(event.rawPayload, [0x46]);
+  });
+
+  test('event stream emits native legacy BM version', () async {
+    final fakePlatform = MockElinkBlePlatform();
+    FlutterElinkBlePlatform.instance = fakePlatform;
+    final nextBmVersion = ElinkBle.bmVersionEvents.first;
+
+    final rawPayload = Uint8List.fromList([
       0x0E,
       0x42,
       0x4D,
@@ -1562,6 +1515,21 @@ void main() {
       0x0A,
       0x0A,
     ]);
+    fakePlatform.eventController.add({
+      'type': 'bmVersion',
+      'remoteId': 'remote-1',
+      'version': 'BM43H1S1.0.0_20241010',
+      'rawPayload': rawPayload,
+    });
+
+    final event = await nextBmVersion;
+    expect(event.remoteId, 'remote-1');
+    expect(event.version, 'BM43H1S1.0.0_20241010');
+    expect(event.command, 0x0E);
+    expect(event.isLegacyCommand, isTrue);
+    expect(event.isEnhancedCommand, isFalse);
+    expect(event.versionKind, 'old');
+    expect(event.rawPayload, rawPayload);
   });
 
   test('event stream normalizes double-headed iOS A6 packets', () async {
@@ -1607,42 +1575,22 @@ void main() {
     ]);
   });
 
-  test('A6 handshake fallback replies and emits status', () async {
+  test('native handshake event emits status', () async {
     final fakePlatform = MockElinkBlePlatform();
     FlutterElinkBlePlatform.instance = fakePlatform;
     final nextHandshake = ElinkBle.handshakeEvents.first;
-    final setPacket = ElinkDataProcessor.wrapA6Frame([
-      ElinkDataProcessor.setHandshake,
-      ...List<int>.filled(16, 0x01),
-    ]);
-    final getPacket = ElinkDataProcessor.wrapA6Frame([
-      ElinkDataProcessor.getHandshake,
-      ...List<int>.filled(16, 0x02),
-    ]);
 
     fakePlatform.eventController.add({
-      'type': 'protocolData',
+      'type': 'handshake',
       'remoteId': 'remote-1',
-      'protocol': 'a6',
-      'data': Uint8List.fromList(setPacket),
-    });
-    await Future<void>.delayed(Duration.zero);
-
-    expect(fakePlatform.lastWriteRemoteId, 'remote-1');
-    expect(fakePlatform.lastWriteData, setPacket);
-    expect(fakePlatform.lastWriteType, ElinkWriteType.withoutResponse.name);
-    expect(fakePlatform.lastHandshakeEncryptRemoteId, 'remote-1');
-
-    fakePlatform.eventController.add({
-      'type': 'protocolData',
-      'remoteId': 'remote-1',
-      'protocol': 'a6',
-      'data': Uint8List.fromList(getPacket),
+      'success': true,
     });
 
     final event = await nextHandshake;
     expect(event.remoteId, 'remote-1');
     expect(event.success, isTrue);
-    expect(fakePlatform.lastCheckHandshakeRemoteId, 'remote-1');
+    expect(fakePlatform.lastWriteRemoteId, isNull);
+    expect(fakePlatform.lastHandshakeEncryptRemoteId, isNull);
+    expect(fakePlatform.lastCheckHandshakeRemoteId, isNull);
   });
 }

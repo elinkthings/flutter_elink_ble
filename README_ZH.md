@@ -18,7 +18,7 @@ ElinkThings BLE SDK 的 Flutter 插件。用于监听 Bluetooth adapter state、
 - 在 Dart 层统一构造 WiFi A6 配网指令，并通过 `writeA6` 下发
 - 解析 WiFi 扫描、状态、响应、MAC、SSID、密码、SN 与服务端配置事件
 - 支持 WiFi 指令日志开关，默认关闭
-- 调用 native Elink SDK 完成 broadcast decrypt、MCU A7 encrypt/decrypt；handshake 在 Flutter A6 数据层统一处理
+- 调用 native Elink SDK 完成 broadcast decrypt、MCU A7 encrypt/decrypt 和 handshake；Flutter 只桥接原生握手结果
 
 ## 安装
 
@@ -80,7 +80,7 @@ Android 12 及以上需要申请 `BLUETOOTH_SCAN`、`BLUETOOTH_ADVERTISE` 与 `B
 <string>Need BLE permission to scan and connect Elink devices.</string>
 ```
 
-iOS 端已随插件内置 `AILinkBleSDK.framework`。扫描、连接、断开和写入统一交给 SDK 的 `ELAILinkBleManager`；插件只负责把 SDK delegate 回调桥接到 Flutter。Handshake 流程由 Flutter A6 数据层统一触发，broadcast decrypt、handshake crypto helper 与 A7 encrypt/decrypt 使用 `AILinkBleSDK` 内的 `ELEncryptTool`，避免多个 framework 暴露同名 Objective-C 类型。当前 Sample 提供的 `AILinkBleSDK.framework` 只有 `arm64` device slice，适合真机编译；如果要跑 simulator，需要替换为包含 simulator slice 的 `AILinkBleSDK.xcframework`。
+iOS 端已随插件内置 `AILinkBleSDK.framework`。扫描、连接、断开、写入和 handshake 统一交给 SDK 的 `ELAILinkBleManager`；插件只负责把 SDK delegate 回调桥接到 Flutter。broadcast decrypt 与 A7 encrypt/decrypt 使用 `AILinkBleSDK` 内的 `ELEncryptTool`，避免多个 framework 暴露同名 Objective-C 类型。当前 Sample 提供的 `AILinkBleSDK.framework` 只有 `arm64` device slice，适合真机编译；如果要跑 simulator，需要替换为包含 simulator slice 的 `AILinkBleSDK.xcframework`。
 
 `AILinkBleSDK.framework` 是静态 archive，内部包含 `ELAILinkBleManager+WIFI` 等 Objective-C category。插件 podspec 已给 Pod target 注入 `-ObjC`，更新插件后需要重新执行 `pod install`，否则运行时可能出现 `unrecognized selector`。
 
@@ -125,7 +125,7 @@ await ElinkBle.startScan(
 
 ## 示例 BLE 流程
 
-example app 中扫描、连接、握手、版本号和 MTU 的主流程如下：
+example app 中扫描、连接、原生握手、版本号和 MTU 的主流程如下：
 
 ```mermaid
 flowchart TD
@@ -135,21 +135,16 @@ flowchart TD
   D --> E[打开设备 tab]
   E --> F[connectionEvents: connected]
   F --> G[serviceDiscoveryEvents]
-  G --> H{发现可写 characteristic?}
-  H -- 否 --> G
-  H -- 是 --> I[initHandshake]
-  I --> J[写入 handshake A6 packet]
-  J --> K[protocolDataPackets]
-  K --> L[处理 handshake response]
-  L --> M[handshakeEvents: success]
-  M --> N[getBmVersion]
-  N --> O[writeA6 payload 0x46]
-  O --> P[bmVersionEvents]
-  M --> Q{平台 MTU 操作}
-  Q -- Android --> R[setAndroidMtu 517]
-  R --> S[mtuEvents]
-  Q -- iOS --> T[getIosMtu]
-  T --> U[withoutResponse / withResponse 最大写入长度]
+  G --> H[原生 SDK handshake]
+  H --> I[handshakeEvents: success]
+  I --> J[getBmVersion]
+  J --> K[native 查询 BM 版本 0x46]
+  K --> L[bmVersionEvents]
+  I --> M{平台 MTU 操作}
+  M -- Android --> N[setAndroidMtu 517]
+  N --> O[mtuEvents]
+  M -- iOS --> P[getIosMtu]
+  P --> Q[withoutResponse / withResponse 最大写入长度]
 ```
 
 对应 example 实现：
@@ -161,9 +156,12 @@ flowchart TD
   停止当前扫描，连接成功后为每台设备创建独立 tab，并自动切到新设备 tab。
 - 设备操作按 `remoteId` 路由，写入、MTU、RSSI、WiFi 配网和断开都作用于当前
   设备 tab。
-- 发现可写 characteristic 后触发 Flutter A6 handshake。
-- BM 版本号通过 `ElinkBle.getBmVersion()` 查询，本质是发送 A6 payload
-  `0x46`。旧版 `0x0E` 查询可使用 `ElinkBle.getLegacyBmVersion()`。
+- 握手由 Android/iOS 原生 SDK 自动处理，结果从 `ElinkBle.handshakeEvents` 返回。
+- BM 版本号通过 `ElinkBle.getBmVersion()` 查询，本质是调用 native SDK
+  增强版 `0x46` 查询入口（Android 为 `getBleVersion46`，iOS 为
+  `GetBMVersionPro`）。Android 原生 SDK 自动读取的是旧版 `0x0E`，所以增强版
+  `0x46` 仍保留为 Flutter 显式 API；原生 SDK 自动上报的旧版 `0x0E` 结果仍会从
+  `bmVersionEvents` 返回。
 - Android 使用 `ElinkBle.setAndroidMtu(remoteId, 517)`，结果从
   `ElinkBle.mtuEvents` 返回。
 - iOS 使用 `ElinkBle.getIosMtu(remoteId)`，读取系统当前协商出的
@@ -172,16 +170,20 @@ flowchart TD
 BM 版本查询：
 
 ```dart
-// 增强版 BM 版本指令：A6 payload 0x46。
+// 增强版 BM 版本指令：native SDK 查询 0x46。
 await ElinkBle.getBmVersion(result.device.remoteId);
 
-// 旧版 BM 版本指令：A6 payload 0x0E。
-await ElinkBle.getLegacyBmVersion(result.device.remoteId);
-
 final bmVersionSub = ElinkBle.bmVersionEvents.listen((event) {
-  print('${event.remoteId}: ${event.version}');
+  print(
+    '${event.remoteId}: '
+    'command=0x${event.command.toRadixString(16).padLeft(2, '0').toUpperCase()} '
+    'type=${event.versionKind} '
+    'version=${event.version}',
+  );
 });
 ```
+
+<p><font color="red"><strong>Android 注意：</strong>部分 Android BLE 模块需要先完成 GATT MTU 协商，BM 版本查询才会返回结果。若调用 <code>ElinkBle.getBmVersion()</code> 后没有收到 <code>bmVersionEvents</code>，建议在连接和服务发现完成后先调用 <code>ElinkBle.setAndroidMtu(remoteId, 517)</code>，收到 <code>ElinkBle.mtuEvents</code> 后再查询 BM 版本。</font></p>
 
 连接并写入数据：
 
@@ -441,7 +443,8 @@ Native events 会被 Dart 层归一化成以下 streams：
 | `characteristicEvent` | `ElinkBle.characteristicEvents` | read/write/descriptorWrite/changed 等底层特征值事件 |
 | `rssi` | `ElinkBle.rssiEvents` | 已连接设备 RSSI 读取结果 |
 | `mtu` | `ElinkBle.mtuEvents` | Android MTU 设置结果 |
-| `handshake` | `ElinkBle.handshakeEvents` | Flutter A6 层统一处理的 handshake 结果 |
+| `handshake` | `ElinkBle.handshakeEvents` | 原生 SDK handshake 结果 |
+| `bmVersion` | `ElinkBle.bmVersionEvents` | 原生 SDK BM 版本结果 |
 | `error` | `ElinkBle.errors` | 插件错误 |
 
 ## 常见注意事项

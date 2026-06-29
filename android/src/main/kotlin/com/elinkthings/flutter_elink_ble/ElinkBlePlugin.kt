@@ -24,13 +24,16 @@ import com.pingwang.bluetoothlib.bean.BleValueBean
 import com.pingwang.bluetoothlib.config.BleConfig
 import com.pingwang.bluetoothlib.device.BleDevice
 import com.pingwang.bluetoothlib.device.ElinkBleCrypto
+import com.pingwang.bluetoothlib.device.BleSendCmdUtil
 import com.pingwang.bluetoothlib.device.SendBleBean
 import com.pingwang.bluetoothlib.device.SendDataBean
 import com.pingwang.bluetoothlib.device.SendMcuBean
 import com.pingwang.bluetoothlib.listener.OnBleDeviceDataListener
+import com.pingwang.bluetoothlib.listener.OnBleHandshakeListener
 import com.pingwang.bluetoothlib.listener.OnBleMtuListener
 import com.pingwang.bluetoothlib.listener.OnBleOtherDataListener
 import com.pingwang.bluetoothlib.listener.OnBleRssiListener
+import com.pingwang.bluetoothlib.listener.OnBleVersionListener
 import com.pingwang.bluetoothlib.listener.OnCallbackBle
 import com.pingwang.bluetoothlib.listener.OnCharacteristicListener
 import com.pingwang.bluetoothlib.utils.BleLog
@@ -153,6 +156,11 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
                     val remoteId = call.argument<String>("remoteId") ?: ""
                     val payload = call.argument<ByteArray>("payload") ?: byteArrayOf()
                     writeA6Internal(remoteId, payload)
+                    result.success(null)
+                }
+                "getBmVersion" -> {
+                    val remoteId = call.argument<String>("remoteId") ?: ""
+                    getBmVersionInternal(remoteId)
                     result.success(null)
                 }
                 "writeA7" -> {
@@ -473,6 +481,14 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
         device.sendData(sendBleBean)
     }
 
+    // 通过 Android SDK 增强版 0x46 指令查询 BM 版本。
+    private fun getBmVersionInternal(remoteId: String) {
+        val device = writableDevice(remoteId)
+        val sendBleBean = SendBleBean()
+        sendBleBean.setHex(BleSendCmdUtil.getInstance().getBleVersion46())
+        device.sendData(sendBleBean)
+    }
+
     private fun writeA7Internal(remoteId: String, payload: ByteArray, cid: Int?) {
         val device = writableDevice(remoteId)
         val deviceType = cid ?: device.cid
@@ -524,6 +540,22 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
 
             override fun onNotifyDataA6(uuid: String, data: ByteArray) {
                 emitProtocolData(remoteId, "a6", data, uuid, null)
+            }
+        })
+        // 使用 Android SDK 自身的握手结果，避免 Flutter 层重复回复 A6 握手指令。
+        device.setOnBleHandshakeListener(object : OnBleHandshakeListener {
+            override fun onHandshake(status: Boolean) {
+                emitHandshake(remoteId, status)
+            }
+        })
+        // 使用 SDK 的 BM 版本解析回调，0x46 分片拼接由底层统一处理。
+        device.setOnBleVersionListener(object : OnBleVersionListener {
+            override fun onBmVersion(version: String) {
+                emitBmVersion(remoteId, version, 0x0E)
+            }
+
+            override fun onBmVersion46(version: String) {
+                emitBmVersion(remoteId, version, 0x46)
             }
         })
         // 同上，只接收带 uuid 的透传入口。
@@ -600,6 +632,30 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
                 "characteristicUuid" to shortUuidString(characteristicUuid),
                 "deviceType" to deviceType,
                 "data" to data
+            )
+        )
+    }
+
+    // 上报原生 SDK 握手状态给 Dart 层。
+    private fun emitHandshake(remoteId: String, success: Boolean) {
+        emit(
+            mapOf(
+                "type" to "handshake",
+                "remoteId" to remoteId,
+                "success" to success
+            )
+        )
+    }
+
+    // 上报原生 SDK 解析后的 BM 版本。
+    private fun emitBmVersion(remoteId: String, version: String, command: Int) {
+        emit(
+            mapOf(
+                "type" to "bmVersion",
+                "remoteId" to remoteId,
+                "version" to version,
+                "command" to command,
+                "rawPayload" to byteArrayOf(command.toByte())
             )
         )
     }

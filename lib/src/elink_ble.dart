@@ -53,8 +53,6 @@ class ElinkBle {
   static final StreamController<ElinkBleException> _errorController =
       StreamController<ElinkBleException>.broadcast();
 
-  static final Map<String, List<int>> _bmVersionFragmentBytes =
-      <String, List<int>>{};
   static final Map<String, ElinkScanResult> _scanResults =
       <String, ElinkScanResult>{};
   static final Map<String, String> _connectionEventKeys = <String, String>{};
@@ -228,15 +226,15 @@ class ElinkBle {
     ElinkWifi.commandLoggingEnabled = enabled;
   }
 
-  /// Flutter A6 handshake 结果回调。
-  /// Flutter A6 handshake result callbacks.
+  /// 原生 SDK 握手结果回调。
+  /// Native SDK handshake result callbacks.
   static Stream<ElinkHandshakeEvent> get handshakeEvents {
     _ensureListening();
     return _handshakeController.stream;
   }
 
-  /// BM 模块版本回调 stream，由 A6 `0x46` 或旧版 `0x0E` 回包解析得到。
-  /// BM module version stream parsed from A6 `0x46` or legacy `0x0E` responses.
+  /// BM 模块版本回调 stream，由 native SDK 版本解析回调得到。
+  /// BM module version stream emitted from native SDK version callbacks.
   static Stream<ElinkBmVersionEvent> get bmVersionEvents {
     _ensureListening();
     return _bmVersionController.stream;
@@ -390,32 +388,14 @@ class ElinkBle {
     );
   }
 
-  /// 通过 A6 `0x46` 查询 BM 模块版本。
-  /// Query the BM module version with A6 command `0x46`.
+  /// 通过 native SDK 增强版 `0x46` 指令查询 BM 模块版本。
+  /// Query the BM module version with the native SDK enhanced `0x46` command.
   ///
   /// 回包会从 [bmVersionEvents] 返回。
   /// The response is emitted through [bmVersionEvents].
   static Future<void> getBmVersion(String remoteId) {
     _ensureListening();
-    return _platform.writeA6(
-      remoteId: remoteId,
-      payload: Uint8List.fromList(ElinkDataProcessor.getBmVersionPayload()),
-    );
-  }
-
-  /// 通过旧版 A6 `0x0E` 查询 BM 模块版本。
-  /// Query the BM module version with legacy A6 command `0x0E`.
-  ///
-  /// 回包会从 [bmVersionEvents] 返回。
-  /// The response is emitted through [bmVersionEvents].
-  static Future<void> getLegacyBmVersion(String remoteId) {
-    _ensureListening();
-    return _platform.writeA6(
-      remoteId: remoteId,
-      payload: Uint8List.fromList(
-        ElinkDataProcessor.getLegacyBmVersionPayload(),
-      ),
-    );
+    return _platform.getBmVersion(remoteId);
   }
 
   /// 发送 A7 payload。
@@ -675,6 +655,12 @@ class ElinkBle {
       case 'connectionState':
         _emitConnectionEvent(ElinkDeviceEvent.fromMap(event));
         break;
+      case 'handshake':
+        _handshakeController.add(ElinkHandshakeEvent.fromMap(event));
+        break;
+      case 'bmVersion':
+        _bmVersionController.add(ElinkBmVersionEvent.fromMap(event));
+        break;
       case 'servicesDiscovered':
         _serviceDiscoveryController.add(
           ElinkServiceDiscoveredEvent.fromMap(event),
@@ -685,8 +671,6 @@ class ElinkBle {
           ElinkProtocolDataPacket.fromMap(event),
         );
         _protocolDataController.add(packet);
-        _handleCommonA6Packet(packet);
-        unawaited(_handleFlutterHandshakePacket(packet));
         break;
       case 'passthroughData':
         _passthroughDataController.add(
@@ -719,9 +703,6 @@ class ElinkBle {
   /// 发送连接状态事件，并过滤同一设备连续重复的状态。
   /// Emit connection events and ignore consecutive duplicates per device.
   static void _emitConnectionEvent(ElinkDeviceEvent event) {
-    if (event.connectionState == ElinkConnectionState.disconnected) {
-      _bmVersionFragmentBytes.remove(event.remoteId);
-    }
     final eventKey = '${event.connectionState.name}|${event.reason ?? ''}';
     if (_connectionEventKeys[event.remoteId] == eventKey) {
       return;
@@ -758,46 +739,6 @@ class ElinkBle {
     return '${androidScanMode?.value ?? "default"}:${services.join(",")}';
   }
 
-  static Future<void> _handleFlutterHandshakePacket(
-    ElinkProtocolDataPacket packet,
-  ) async {
-    if (packet.protocol != ElinkProtocolDataType.a6) {
-      return;
-    }
-    final a6Packet = _normalizeA6Packet(packet.data);
-    try {
-      if (ElinkDataProcessor.isSetHandshakeCommand(a6Packet)) {
-        final response = await ElinkDataProcessor.getHandshakeEncryptData(
-          a6Packet,
-          remoteId: packet.remoteId,
-        );
-        if (response == null || response.isEmpty) return;
-        await _platform.write(
-          remoteId: packet.remoteId,
-          data: response,
-          type: ElinkWriteType.withoutResponse.name,
-        );
-      } else if (ElinkDataProcessor.isGetHandshakeCommand(a6Packet)) {
-        await Future<void>.delayed(const Duration(milliseconds: 500));
-        final ready = await ElinkDataProcessor.checkHandshakeStatus(
-          a6Packet,
-          remoteId: packet.remoteId,
-        );
-        _handshakeController.add(
-          ElinkHandshakeEvent(remoteId: packet.remoteId, success: ready),
-        );
-      }
-    } catch (error) {
-      _errorController.add(
-        ElinkBleException(
-          code: 'handshake_error',
-          message: error.toString(),
-          details: packet,
-        ),
-      );
-    }
-  }
-
   static ElinkProtocolDataPacket _normalizeProtocolPacket(
     ElinkProtocolDataPacket packet,
   ) {
@@ -813,75 +754,5 @@ class ElinkBle {
       characteristicUuid: packet.characteristicUuid,
       deviceType: packet.deviceType,
     );
-  }
-
-  static void _handleCommonA6Packet(ElinkProtocolDataPacket packet) {
-    if (packet.protocol != ElinkProtocolDataType.a6) {
-      return;
-    }
-    final payload = ElinkDataProcessor.normalizeA6Payload(packet.data);
-    if (payload.isEmpty) {
-      return;
-    }
-    if (payload[0] == ElinkDataProcessor.getLegacyBmVersionCommand) {
-      final version = ElinkDataProcessor.parseBmVersion(payload);
-      if (version == null) {
-        return;
-      }
-      _bmVersionController.add(
-        ElinkBmVersionEvent(
-          remoteId: packet.remoteId,
-          version: version,
-          rawPayload: Uint8List.fromList(payload),
-        ),
-      );
-      return;
-    }
-    if (payload.length < 3 ||
-        payload[0] != ElinkDataProcessor.getBmVersionCommand) {
-      return;
-    }
-    final fragmentIndex = payload[1] & 0x0f;
-    final lastFragmentIndex = (payload[1] >> 4) & 0x0f;
-    if (fragmentIndex > lastFragmentIndex) {
-      _bmVersionFragmentBytes.remove(packet.remoteId);
-      return;
-    }
-    if (fragmentIndex == 0) {
-      _bmVersionFragmentBytes[packet.remoteId] = <int>[];
-    }
-    final versionBytes = _bmVersionFragmentBytes.putIfAbsent(
-      packet.remoteId,
-      () => <int>[],
-    );
-    versionBytes.addAll(payload.sublist(2));
-    if (fragmentIndex != lastFragmentIndex) {
-      return;
-    }
-    _bmVersionFragmentBytes.remove(packet.remoteId);
-    if (versionBytes.isEmpty) {
-      return;
-    }
-    final version = String.fromCharCodes(versionBytes);
-    _bmVersionController.add(
-      ElinkBmVersionEvent(
-        remoteId: packet.remoteId,
-        version: version,
-        rawPayload: Uint8List.fromList(payload),
-      ),
-    );
-  }
-
-  static List<int> _normalizeA6Packet(List<int> data) {
-    if (ElinkDataProcessor.isA6Packet(data)) {
-      return data;
-    }
-    final payload = ElinkDataProcessor.normalizeA6Payload(data);
-    if (payload.isNotEmpty &&
-        (payload.first == ElinkDataProcessor.setHandshake ||
-            payload.first == ElinkDataProcessor.getHandshake)) {
-      return ElinkDataProcessor.wrapA6Frame(payload);
-    }
-    return data;
   }
 }

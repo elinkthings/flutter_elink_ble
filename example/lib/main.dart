@@ -45,10 +45,7 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
 
   final List<StreamSubscription<Object?>> _subscriptions = [];
   final Map<String, List<String>> _deviceLogs = <String, List<String>>{};
-  final Set<String> _handshakeStartedRemoteIds = <String>{};
   final Set<String> _handshakeReadyRemoteIds = <String>{};
-  final Map<String, ElinkServiceDiscoveredEvent> _handshakeServiceEvents =
-      <String, ElinkServiceDiscoveredEvent>{};
   List<ElinkScanResult> _scanResults = const <ElinkScanResult>[];
   ElinkAdapterState _adapterState = ElinkBle.adapterStateNow;
   bool _isScanning = false;
@@ -96,9 +93,7 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
                 _connectedRemoteIds.remove(event.remoteId);
                 _connectedMacAddresses.remove(event.remoteId);
                 _bmVersions.remove(event.remoteId);
-                _handshakeStartedRemoteIds.remove(event.remoteId);
                 _handshakeReadyRemoteIds.remove(event.remoteId);
-                _handshakeServiceEvents.remove(event.remoteId);
                 if (_selectedRemoteId == event.remoteId) {
                   _selectedRemoteId = _connectedRemoteIds.isEmpty
                       ? null
@@ -116,9 +111,6 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
             '[connectionEvents] ${event.remoteId}: '
             '${event.connectionState.name}',
           );
-          if (event.connectionState.isConnected) {
-            unawaited(_startHandshakeIfReady(event.remoteId));
-          }
         }),
       )
       ..add(
@@ -129,10 +121,6 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
             '${event.serviceUuid} '
             '${event.characteristicUuids.map((uuid) => uuid.value).join(",")}',
           );
-          if (_hasWriteCharacteristic(event)) {
-            _handshakeServiceEvents[event.remoteId] = event;
-            unawaited(_startHandshakeIfReady(event.remoteId));
-          }
         }),
       )
       ..add(
@@ -211,7 +199,10 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
           }
           _addDeviceLog(
             event.remoteId,
-            '[bmVersionEvents] ${event.remoteId}: ${event.version}',
+            '[bmVersionEvents] ${event.remoteId}: '
+            'command=0x${event.command.toRadixString(16).padLeft(2, '0').toUpperCase()} '
+            'type=${event.versionKind} '
+            'version=${event.version}',
           );
         }),
       )
@@ -326,7 +317,6 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
       onClearLogs: () => _clearDeviceLogs(remoteId),
       onDisconnect: () => unawaited(_disconnectDevice(remoteId)),
       onGetBmVersion: () => unawaited(_getBmVersion(remoteId)),
-      onGetLegacyBmVersion: () => unawaited(_getLegacyBmVersion(remoteId)),
       mtuActionLabel: Platform.isIOS
           ? 'Get iOS MTU'
           : Platform.isAndroid
@@ -516,27 +506,9 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
   Future<void> _getBmVersion(String remoteId) async {
     try {
       await ElinkBle.getBmVersion(remoteId);
-      _addDeviceLog(
-        remoteId,
-        '[tx][getBmVersion] $remoteId: '
-        '${ElinkDataProcessor.formatHex(ElinkDataProcessor.getBmVersionPacket())}',
-      );
+      _addDeviceLog(remoteId, '[tx][getBmVersion] $remoteId: native 0x46');
     } catch (error) {
       _addDeviceLog(remoteId, '[getBmVersion] $remoteId: $error');
-    }
-  }
-
-  /// 获取旧版 BM 模块版本，并记录旧版 `0x0E` 查询指令。
-  Future<void> _getLegacyBmVersion(String remoteId) async {
-    try {
-      await ElinkBle.getLegacyBmVersion(remoteId);
-      _addDeviceLog(
-        remoteId,
-        '[tx][getLegacyBmVersion] $remoteId: '
-        '${ElinkDataProcessor.formatHex(ElinkDataProcessor.getLegacyBmVersionPacket())}',
-      );
-    } catch (error) {
-      _addDeviceLog(remoteId, '[getLegacyBmVersion] $remoteId: $error');
     }
   }
 
@@ -546,53 +518,6 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
       MaterialPageRoute<void>(
         builder: (context) => WifiProvisioningPage(initialRemoteId: remoteId),
       ),
-    );
-  }
-
-  bool _hasWriteCharacteristic(ElinkServiceDiscoveredEvent event) {
-    return event.characteristicUuids.any((uuid) {
-      return uuid == ElinkGuid.write ||
-          uuid == ElinkGuid.writeAndNotify ||
-          uuid.value == 'FFE1' ||
-          uuid.value == 'FFE3';
-    });
-  }
-
-  Future<void> _startHandshakeIfReady(String remoteId) async {
-    final event = _handshakeServiceEvents[remoteId];
-    if (event == null ||
-        !_connectedRemoteIds.contains(remoteId) ||
-        !_handshakeStartedRemoteIds.add(remoteId)) {
-      return;
-    }
-    try {
-      final packet = await ElinkDataProcessor.initHandshake(remoteId: remoteId);
-      if (packet == null || packet.isEmpty) {
-        _addDeviceLog(remoteId, '[handshake] $remoteId: init packet is empty');
-        return;
-      }
-      await _writeData(remoteId, packet, source: 'handshake');
-      _addRawFrameParseLogs(
-        source: 'tx:handshake',
-        remoteId: remoteId,
-        data: packet,
-      );
-    } catch (error) {
-      _handshakeStartedRemoteIds.remove(remoteId);
-      _addDeviceLog(remoteId, '[handshake] $remoteId: $error');
-    }
-  }
-
-  Future<void> _writeData(
-    String remoteId,
-    Iterable<int> data, {
-    required String source,
-  }) async {
-    final bytes = List<int>.unmodifiable(data);
-    await ElinkBle.write(remoteId, bytes);
-    _addDeviceLog(
-      remoteId,
-      '[tx][$source] $remoteId: ${ElinkDataProcessor.formatHex(bytes)}',
     );
   }
 

@@ -1,15 +1,28 @@
-## 0.2.2
+## 0.2.3
 
-* Changed `ElinkBle.getBmVersion()` to send the enhanced A6 BM version command
-  `0x46` instead of `0x0E`.
-* Updated BM version parsing to read the enhanced `0x46` fragment-control byte
-  plus ASCII version payload format.
-* Added `ElinkBle.getLegacyBmVersion()` for legacy `0x0E` BM version queries
-  while keeping legacy response parsing.
+* Deprecated Flutter-layer manual handshake helpers; Android and iOS now emit
+  `handshakeEvents` from the native SDK handshake callbacks.
+* Kept explicit enhanced BM version query `0x46` because the Android native SDK
+  only auto-queries the legacy `0x0E` BM version command.
+* Changed `ElinkBle.getBmVersion()` to call the native SDK enhanced BM version
+  query (`getBleVersion46` on Android and `GetBMVersionPro` on iOS) instead of
+  writing the A6 payload directly from Dart.
+* Removed Flutter-layer direct BM version payload builders and parsers; BM
+  version results now come from native SDK callbacks.
+* Removed the explicit legacy `0x0E` BM version query API; native legacy BM
+  version reports are still bridged through `bmVersionEvents`.
+* Added BM version command metadata so Dart can classify native `0x0E` reports
+  as legacy and `0x46` reports as enhanced.
+* Optimized WiFi provisioning failure-state parsing by merging `0xAB` failure
+  reasons into status events, normalizing legacy native failure statuses `5/6/7`
+  to `connectApFail` with `failStatus`, and dropping stale failure reasons from
+  non-failure WiFi states.
 * Updated the example connection page with compact BM version actions and
-  structured BLE log rendering.
-* Updated BM version tests and documentation for both `0x46` and legacy `0x0E`
-  commands.
+  structured BLE log rendering, including BM version command/type output.
+* Updated BM version tests and documentation for the native `0x46` query and
+  native BM version callbacks.
+* Documented that some Android modules require MTU negotiation before BM version
+  queries return data.
 
 ## 0.2.0
 

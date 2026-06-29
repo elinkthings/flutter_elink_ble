@@ -20,8 +20,6 @@ class ElinkDataProcessor {
   static const int a7End = 0x7A;
   static const int setHandshake = 0x23;
   static const int getHandshake = 0x24;
-  static const int getBmVersionCommand = 0x46;
-  static const int getLegacyBmVersionCommand = 0x0E;
 
   static FlutterElinkBlePlatform get _platform {
     return FlutterElinkBlePlatform.instance;
@@ -62,12 +60,20 @@ class ElinkDataProcessor {
 
   /// 生成 handshake 首包。
   /// Build the initial handshake packet.
+  @Deprecated(
+    'Native SDKs handle handshake automatically. '
+    'Listen to ElinkBle.handshakeEvents for the native result.',
+  )
   static Future<Uint8List?> initHandshake({String? remoteId}) {
     return _platform.initHandshake(remoteId: remoteId);
   }
 
   /// 根据设备下发的 handshake command 生成加密回复。
   /// Build encrypted handshake response for the device command.
+  @Deprecated(
+    'Native SDKs handle handshake automatically. '
+    'Listen to ElinkBle.handshakeEvents for the native result.',
+  )
   static Future<Uint8List?> getHandshakeEncryptData(
     List<int> payload, {
     String? remoteId,
@@ -80,6 +86,10 @@ class ElinkDataProcessor {
 
   /// 检查 handshake 是否完成。
   /// Check whether handshake is complete.
+  @Deprecated(
+    'Native SDKs handle handshake automatically. '
+    'Listen to ElinkBle.handshakeEvents for the native result.',
+  )
   static Future<bool> checkHandshakeStatus(
     List<int> payload, {
     String? remoteId,
@@ -88,73 +98,6 @@ class ElinkDataProcessor {
       Uint8List.fromList(payload),
       remoteId: remoteId,
     );
-  }
-
-  /// 生成获取 BM 模块版本的 A6 payload。
-  /// Build the A6 payload for querying the BM module version.
-  static List<int> getBmVersionPayload() {
-    return const <int>[getBmVersionCommand];
-  }
-
-  /// 生成获取旧版 BM 模块版本的 A6 payload。
-  /// Build the legacy A6 payload for querying the BM module version.
-  static List<int> getLegacyBmVersionPayload() {
-    return const <int>[getLegacyBmVersionCommand];
-  }
-
-  /// 生成获取 BM 模块版本的完整 A6 packet，主要用于日志显示。
-  /// Build the full A6 packet for querying BM version, mostly for logging.
-  static List<int> getBmVersionPacket() {
-    return wrapA6Frame(getBmVersionPayload());
-  }
-
-  /// 生成获取旧版 BM 模块版本的完整 A6 packet，主要用于日志显示。
-  /// Build the full legacy A6 packet for querying BM version, mostly for logging.
-  static List<int> getLegacyBmVersionPacket() {
-    return wrapA6Frame(getLegacyBmVersionPayload());
-  }
-
-  /// 解析单包 BM 模块版本回包；入参可为完整 A6 packet 或 A6 payload。
-  /// Parse a single-packet BM version response from either a full A6 packet or an A6 payload.
-  static String? parseBmVersion(List<int> data) {
-    final payload = normalizeA6Payload(data);
-    if (payload.isEmpty) {
-      return null;
-    }
-    if (payload[0] == getLegacyBmVersionCommand) {
-      return _parseLegacyBmVersionPayload(payload);
-    }
-    if (payload.length < 3 || payload[0] != getBmVersionCommand) {
-      return null;
-    }
-    final fragmentIndex = payload[1] & 0x0f;
-    final lastFragmentIndex = (payload[1] >> 4) & 0x0f;
-    if (fragmentIndex != 0 || lastFragmentIndex != 0) {
-      return null;
-    }
-    final versionBytes = payload.sublist(2).toList(growable: false);
-    if (versionBytes.isEmpty) {
-      return null;
-    }
-    return String.fromCharCodes(versionBytes);
-  }
-
-  /// 解析旧版 `0x0E` BM 模块版本回包。
-  /// Parse the legacy `0x0E` BM module version response.
-  static String? _parseLegacyBmVersionPayload(List<int> payload) {
-    if (payload.length < 10 || payload[0] != getLegacyBmVersionCommand) {
-      return null;
-    }
-    final name = String.fromCharCodes([payload[1], payload[2]]);
-    final model = (payload[3] & 0xff).toString().padLeft(2, '0');
-    final hardware = payload[4] & 0xff;
-    final software = ((payload[5] & 0xff) / 10.0).toString();
-    final custom = payload[6] & 0xff;
-    final year = (payload[7] & 0xff) + 2000;
-    final month = (payload[8] & 0xff).toString().padLeft(2, '0');
-    final day = (payload[9] & 0xff).toString().padLeft(2, '0');
-    return '$name${model}H${hardware}S$software.$custom'
-        '_$year$month$day';
   }
 
   /// 将 CID int 转为协议使用的 2-byte 大端序。

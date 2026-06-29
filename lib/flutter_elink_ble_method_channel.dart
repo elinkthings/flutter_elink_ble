@@ -164,6 +164,14 @@ class MethodChannelFlutterElinkBle extends FlutterElinkBlePlatform {
     });
   }
 
+  /// 通过 native SDK 增强版 `0x46` 指令查询 BM 版本。
+  @override
+  Future<void> getBmVersion(String remoteId) {
+    return methodChannel.invokeMethod<void>('getBmVersion', <String, Object?>{
+      'remoteId': remoteId,
+    });
+  }
+
   @override
   Future<void> writeA7({
     required String remoteId,

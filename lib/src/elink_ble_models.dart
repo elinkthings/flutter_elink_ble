@@ -719,8 +719,8 @@ class ElinkIosMtu {
   }
 }
 
-/// Flutter A6 handshake 回调事件。
-/// Flutter A6 handshake callback event.
+/// 原生 SDK handshake 回调事件。
+/// Native SDK handshake callback event.
 class ElinkHandshakeEvent {
   const ElinkHandshakeEvent({required this.remoteId, required this.success});
 
@@ -730,6 +730,7 @@ class ElinkHandshakeEvent {
   /// `true` means the handshake succeeded.
   final bool success;
 
+  /// 从 native 事件 map 构建握手事件。
   factory ElinkHandshakeEvent.fromMap(Map<dynamic, dynamic> map) {
     return ElinkHandshakeEvent(
       remoteId: map['remoteId']?.toString() ?? '',
@@ -744,18 +745,64 @@ class ElinkBmVersionEvent {
   const ElinkBmVersionEvent({
     required this.remoteId,
     required this.version,
+    required this.command,
     required this.rawPayload,
   });
 
   final String remoteId;
 
-  /// 按 AiLinkSecretFlutter common parser 格式化后的 BM version。
-  /// BM version formatted with the AiLinkSecretFlutter common parser rules.
+  /// native SDK 已解析出的 BM version。
+  /// BM version parsed by the native SDK.
   final String version;
 
-  /// 原始 A6 payload，首字节为 `0x46` 或旧版 `0x0E`.
-  /// Raw A6 payload whose first byte is `0x46` or legacy `0x0E`.
+  /// BM 版本命令字，`0x0E` 表示旧版，`0x46` 表示新版。
+  /// BM version command byte; `0x0E` means legacy and `0x46` means enhanced.
+  final int command;
+
+  /// 根据命令字判断是否为旧版 BM 版本回包。
+  bool get isLegacyCommand => command == 0x0E;
+
+  /// 根据命令字判断是否为新版 BM 版本回包。
+  bool get isEnhancedCommand => command == 0x46;
+
+  /// 根据命令字返回日志展示使用的新旧类型。
+  String get versionKind {
+    if (isLegacyCommand) return 'old';
+    if (isEnhancedCommand) return 'new';
+    return 'unknown';
+  }
+
+  /// 原始 A6 payload；native 仅回传版本字符串时只包含命令字节。
+  /// Raw A6 payload; contains only the command byte when native only returns the parsed version.
   final Uint8List rawPayload;
+
+  /// 从 native 事件 map 构建 BM 版本事件。
+  factory ElinkBmVersionEvent.fromMap(Map<dynamic, dynamic> map) {
+    final payload = map['rawPayload'];
+    final rawPayload = payload is Uint8List
+        ? payload
+        : payload is List
+        ? Uint8List.fromList(
+            payload
+                .whereType<num>()
+                .map((value) => value.toInt() & 0xff)
+                .toList(growable: false),
+          )
+        : null;
+    final command =
+        (map['command'] is num
+            ? (map['command'] as num).toInt()
+            : rawPayload == null || rawPayload.isEmpty
+            ? 0x46
+            : rawPayload.first) &
+        0xff;
+    return ElinkBmVersionEvent(
+      remoteId: map['remoteId']?.toString() ?? '',
+      version: map['version']?.toString() ?? '',
+      command: command,
+      rawPayload: rawPayload ?? Uint8List.fromList(<int>[command]),
+    );
+  }
 }
 
 /// 插件统一错误类型，承载 native error code/message/details.

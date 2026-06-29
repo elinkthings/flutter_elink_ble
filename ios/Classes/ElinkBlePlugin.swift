@@ -152,6 +152,16 @@ public class ElinkBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
       }
       writeA6(payload: payload.data, remoteId: remoteId)
       result(nil)
+    case "getBmVersion":
+      guard
+        let args = call.arguments as? [String: Any],
+        let remoteId = args["remoteId"] as? String
+      else {
+        result(FlutterError(code: "bad_args", message: "Missing remoteId", details: nil))
+        return
+      }
+      getBmVersion(remoteId: remoteId)
+      result(nil)
     case "writeA7":
       guard
         let args = call.arguments as? [String: Any],
@@ -397,6 +407,12 @@ public class ElinkBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
     session.writeA6(payload)
   }
 
+  /// 通过 iOS SDK 增强版 0x46 指令查询 BM 版本。
+  private func getBmVersion(remoteId: String) {
+    guard let session = readySession(remoteId: remoteId) else { return }
+    session.getBmVersion()
+  }
+
   private func writeA7(payload: Data, remoteId: String) {
     guard let session = readySession(remoteId: remoteId) else { return }
     session.writeA7(payload)
@@ -568,6 +584,31 @@ public class ElinkBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
     ])
   }
 
+  /// 上报原生 SDK 握手状态给 Dart 层。
+  private func emitHandshake(remoteId: String, success: Bool) {
+    emit([
+      "type": "handshake",
+      "remoteId": remoteId,
+      "success": success,
+    ])
+  }
+
+  /// 上报原生 SDK 解析后的 BM 版本。
+  private func emitBmVersion(
+    remoteId: String,
+    version: String,
+    command: Int,
+    rawPayload: Data
+  ) {
+    emit([
+      "type": "bmVersion",
+      "remoteId": remoteId,
+      "version": version,
+      "command": command,
+      "rawPayload": FlutterStandardTypedData(bytes: rawPayload),
+    ])
+  }
+
   private func emitProtocolData(
     _ data: Data,
     protocolName: String,
@@ -691,6 +732,17 @@ public class ElinkBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
       emitConnection: { [weak self] remoteId, state, reason in
         self?.emitConnection(remoteId: remoteId, state: state, reason: reason)
       },
+      emitHandshake: { [weak self] remoteId, success in
+        self?.emitHandshake(remoteId: remoteId, success: success)
+      },
+      emitBmVersion: { [weak self] remoteId, version, command, rawPayload in
+        self?.emitBmVersion(
+          remoteId: remoteId,
+          version: version,
+          command: command,
+          rawPayload: rawPayload
+        )
+      },
       emitError: { [weak self] code, message in
         self?.emitError(code: code, message: message)
       },
@@ -775,6 +827,8 @@ extension ElinkBlePlugin: ELAILinkBleManagerDelegate {
 /// iOS 单设备连接会话回调集合，由插件注入以保持访问控制收敛。
 private struct ElinkIosDeviceSessionCallbacks {
   let emitConnection: (String, String, String?) -> Void
+  let emitHandshake: (String, Bool) -> Void
+  let emitBmVersion: (String, String, Int, Data) -> Void
   let emitError: (String, String) -> Void
   let emitEvent: ([String: Any]) -> Void
   let emitCharacteristicEvent: (String, String, CBCharacteristic) -> Void
@@ -856,6 +910,11 @@ private final class ElinkIosDeviceSession: NSObject, ELAILinkBleManagerDelegate 
   /// 向当前 session 发送 A6 payload。
   func writeA6(_ payload: Data) {
     manager.sendA6Payload(payload)
+  }
+
+  /// 查询增强版 BM 模块版本，使用 SDK `0x46` 指令入口。
+  func getBmVersion() {
+    manager.getBluetoothInfo(with: .cmdTypeGetBMVersionPro)
   }
 
   /// 向当前 session 发送 A7 payload。
@@ -1039,8 +1098,16 @@ private final class ElinkIosDeviceSession: NSObject, ELAILinkBleManagerDelegate 
       pendingConnectRemoteId = nil
       connectionReady = true
       clearConnectTimer()
+      callbacks.emitHandshake(remoteId, true)
       callbacks.emitConnection(remoteId, "connected", nil)
-    case 0x01, 0x02, 0x0F:
+    case 0x0F:
+      pendingConnectRemoteId = nil
+      connectionReady = false
+      clearConnectTimer()
+      callbacks.emitHandshake(remoteId, false)
+      callbacks.emitConnection(remoteId, "disconnected", nil)
+      callbacks.removeSession(remoteId)
+    case 0x01, 0x02:
       pendingConnectRemoteId = nil
       connectionReady = false
       clearConnectTimer()
@@ -1106,11 +1173,27 @@ private final class ElinkIosDeviceSession: NSObject, ELAILinkBleManagerDelegate 
   func aiLinkBleReceiveA6Data(_ packet: Data, aILinkPeripheral: ELAILinkPeripheral) {
     let packetRemoteId = callbacks.remoteId(aILinkPeripheral.peripheral)
     let payload = callbacks.normalizeA6ProtocolData(packet)
+    emitBmVersionIfNeeded(remoteId: packetRemoteId, payload: payload)
     callbacks.emitProtocolData(payload, "a6", packetRemoteId)
   }
 
   func aiLinkBleReceiveRawData(_ rawData: Data, aILinkPeripheral: ELAILinkPeripheral) {
     let packetRemoteId = callbacks.remoteId(aILinkPeripheral.peripheral)
     callbacks.emitPassthroughData(rawData, packetRemoteId)
+  }
+
+  /// 如果 A6 payload 是 BM 版本回包，则读取 SDK 已解析的版本属性并统一回调。
+  private func emitBmVersionIfNeeded(remoteId: String, payload: Data) {
+    guard let command = payload.first else { return }
+    switch command {
+    case 0x0E:
+      guard !manager.bmVersion.isEmpty else { return }
+      callbacks.emitBmVersion(remoteId, manager.bmVersion, Int(command), payload)
+    case 0x46:
+      guard !manager.bmVersionPro.isEmpty else { return }
+      callbacks.emitBmVersion(remoteId, manager.bmVersionPro, Int(command), payload)
+    default:
+      return
+    }
   }
 }
