@@ -40,7 +40,7 @@ Or add it manually to `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  flutter_elink_ble: ^0.2.0
+  flutter_elink_ble: ^0.2.4
 ```
 
 ## Android Setup
@@ -92,6 +92,8 @@ The plugin currently vendors `AILinkBleSDK.framework`. The sample framework cont
 `AILinkBleSDK.framework` is a static archive and contains Objective-C categories such as `ELAILinkBleManager+WIFI`. The plugin podspec injects `-ObjC` into the Pod target so those category methods are linked into `flutter_elink_ble.framework`. Run `pod install` again after updating the plugin; otherwise runtime may fail with `unrecognized selector`.
 
 Each iOS connection is handled by its own `ELAILinkBleManager` session so the SDK's current peripheral state is not shared across connected devices. When connecting from a recent scan result, the plugin first tries to retrieve the target `CBPeripheral` by identifier through that session's `CBCentralManager`; if it cannot be retrieved, it falls back to a session-local scan for the same `remoteId`.
+
+iOS operations that require a ready connection, such as RSSI reads, writes, A6/A7 commands, BM version queries, and MTU reads, return a `device_not_connected` platform error when the target `remoteId` is not connected. Old disconnect callbacks are scoped to the session that created them, so reconnecting the same `remoteId` is not invalidated by stale callbacks.
 
 If Bluetooth is on but scanning fails on iOS, check the host app permission text and the app's Bluetooth permission in iOS Settings. Native errors are normalized as `bluetooth_off`, `bluetooth_unauthorized`, `bluetooth_unsupported`, or `bluetooth_not_ready`.
 
@@ -429,6 +431,8 @@ WiFi-specific Dart streams:
 - iOS `remoteId` is `CBPeripheral.identifier`, not a MAC address.
 - iOS multi-device connections use one `ELAILinkBleManager` session per
   `remoteId`; always pass the target `remoteId` when writing or disconnecting.
+- iOS connection-scoped operations return `device_not_connected` when the target
+  session is not ready; handle this like any other platform exception.
 - iOS does not support active MTU requests from apps; use the system-negotiated maximum write length instead.
 - Android command resend is disabled by default. Set `resendCount >= 1` only
   when the business flow needs SDK-level retry after a failed command send.

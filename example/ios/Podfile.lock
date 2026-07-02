@@ -1,6 +1,6 @@
 PODS:
   - Flutter (1.0.0)
-  - flutter_elink_ble (0.2.0):
+  - flutter_elink_ble (0.2.4):
     - Flutter
   - integration_test (0.0.1):
     - Flutter
@@ -20,7 +20,7 @@ EXTERNAL SOURCES:
 
 SPEC CHECKSUMS:
   Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
-  flutter_elink_ble: 7070c4acf4c335babda10a07859d7915ad4ba357
+  flutter_elink_ble: 52055993e4ee2fa8bbef16332aa7172e563baae4
   integration_test: 4a889634ef21a45d28d50d622cf412dc6d9f586e
 
 PODFILE CHECKSUM: f8c2dcdfb50bb67645580d28a6bf814fca30bdec

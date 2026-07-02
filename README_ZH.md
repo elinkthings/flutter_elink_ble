@@ -32,7 +32,7 @@ flutter pub add flutter_elink_ble
 
 ```yaml
 dependencies:
-  flutter_elink_ble: ^0.2.0
+  flutter_elink_ble: ^0.2.4
 ```
 
 ## Android 配置
@@ -85,6 +85,8 @@ iOS 端已随插件内置 `AILinkBleSDK.framework`。扫描、连接、断开、
 `AILinkBleSDK.framework` 是静态 archive，内部包含 `ELAILinkBleManager+WIFI` 等 Objective-C category。插件 podspec 已给 Pod target 注入 `-ObjC`，更新插件后需要重新执行 `pod install`，否则运行时可能出现 `unrecognized selector`。
 
 iOS 多连时，每个 `remoteId` 会使用独立的 `ELAILinkBleManager` session，避免 SDK 的 current peripheral 状态在多台设备之间互相覆盖。从近期扫描结果发起连接时，插件会先通过该 session 自己的 `CBCentralManager` 按 identifier retrieve 目标 `CBPeripheral`；retrieve 不到时才回退到 session 内部扫描同一个 `remoteId`。
+
+iOS 上依赖已就绪连接的操作，例如 RSSI、写入、A6/A7 指令、BM 版本查询和 MTU 查询，如果目标 `remoteId` 未连接，会返回 `device_not_connected` platform error，同时继续上报原生错误事件。旧 session 的断开回调只允许清理自己创建的连接，重新连接同一个 `remoteId` 不会再被旧回调误删。
 
 如果 iOS 蓝牙已打开但扫描失败，先确认宿主 App 是否已加入上述权限文案，并在系统设置中允许蓝牙权限。Native 层会区分 `bluetooth_off`、`bluetooth_unauthorized`、`bluetooth_unsupported` 与 `bluetooth_not_ready`，避免把权限或初始化中的状态误报为蓝牙关闭。
 
@@ -453,6 +455,7 @@ Native events 会被 Dart 层归一化成以下 streams：
 - Android 7.0+ 对 BLE scan 有系统限流，30 秒内不要反复 `startScan` 超过 5 次。插件会复用相同配置的进行中扫描，并在 Android 原生层拦截过快的重启，返回 `scan_throttled` 和 `retryAfterMs`。
 - iOS 的 `remoteId` 是 `CBPeripheral.identifier`，不是设备 MAC address。
 - iOS 多连按 `remoteId` 维护独立 `ELAILinkBleManager` session；写入或断开时必须传目标设备的 `remoteId`。
+- iOS 按连接执行的操作在目标 session 未就绪时会返回 `device_not_connected`，业务侧应按 platform exception 处理。
 - iOS 不支持 App 主动设置 MTU；只能通过系统协商后的 `maximumWriteValueLength` 判断可写长度。
 - Android 指令重发默认关闭；只有业务确实需要 SDK 层发送失败重试时再设置 `resendCount >= 1`。
 - Android 12+ 宿主 App 需要自行申请 `BLUETOOTH_SCAN`、`BLUETOOTH_ADVERTISE`、`BLUETOOTH_CONNECT` runtime permission；Android 11 及以下扫描还需要 location permission，且系统定位服务需要打开。

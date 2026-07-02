@@ -1,3 +1,13 @@
+## 0.2.4
+
+* Fixed iOS session cleanup so stale async callbacks from an old connection can
+  no longer remove a newer session for the same `remoteId`.
+* Changed iOS RSSI, write, A6/A7, BM version, and MTU operations to return a
+  `device_not_connected` MethodChannel error when the target session is not
+  ready, while still emitting the native error event.
+* Updated the example iOS project to the Flutter 3.41 UIScene template and
+  refreshed the CocoaPods lockfile to match the plugin version.
+
 ## 0.2.3
 
 * Deprecated Flutter-layer manual handshake helpers; Android and iOS now emit
