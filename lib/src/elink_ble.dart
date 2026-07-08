@@ -52,6 +52,8 @@ class ElinkBle {
       StreamController<ElinkBmVersionEvent>.broadcast();
   static final StreamController<ElinkBleException> _errorController =
       StreamController<ElinkBleException>.broadcast();
+  static final StreamController<ElinkNativeLogEvent> _nativeLogController =
+      StreamController<ElinkNativeLogEvent>.broadcast();
 
   static final Map<String, ElinkScanResult> _scanResults =
       <String, ElinkScanResult>{};
@@ -246,6 +248,17 @@ class ElinkBle {
     _ensureListening();
     return _errorController.stream;
   }
+
+  /// Native 插件日志事件 stream，由业务侧订阅后输出或写入导出日志。
+  /// Native plugin log events for business-side output and log export.
+  static Stream<ElinkNativeLogEvent> get nativeLogEvents {
+    _ensureListening();
+    return _nativeLogController.stream;
+  }
+
+  /// [nativeLogEvents] 的语义化短别名。
+  /// Short semantic alias for [nativeLogEvents].
+  static Stream<ElinkNativeLogEvent> get nativeLogs => nativeLogEvents;
 
   /// 开始 BLE scan。默认扫描 Elink 广播设备 `F0A0` 与连接设备 `FFE0`。
   /// Start BLE scan. Defaults to Elink broadcast service `F0A0` and connect service `FFE0`.
@@ -685,6 +698,10 @@ class ElinkBle {
         break;
       case 'mtu':
         _mtuController.add(ElinkMtuEvent.fromMap(event));
+        break;
+      case 'nativeLog':
+        final nativeLog = ElinkNativeLogEvent.fromMap(event);
+        _nativeLogController.add(nativeLog);
         break;
       case 'error':
         _errorController.add(ElinkBleException.fromMap(event));

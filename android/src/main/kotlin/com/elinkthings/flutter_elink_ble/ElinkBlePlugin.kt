@@ -36,21 +36,18 @@ import com.pingwang.bluetoothlib.listener.OnBleRssiListener
 import com.pingwang.bluetoothlib.listener.OnBleVersionListener
 import com.pingwang.bluetoothlib.listener.OnCallbackBle
 import com.pingwang.bluetoothlib.listener.OnCharacteristicListener
-import com.pingwang.bluetoothlib.utils.BleLog
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.util.ArrayDeque
-import java.util.Locale
-import java.util.UUID
 
 class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChannel.StreamHandler {
     private lateinit var context: Context
     private lateinit var methodChannel: MethodChannel
     private lateinit var eventChannel: EventChannel
     private val handler = Handler(Looper.getMainLooper())
-    private var eventSink: EventChannel.EventSink? = null
+    private val eventEmitter = ElinkAndroidEventEmitter(handler)
     private var bluetoothAdapter: BluetoothAdapter? = null
     private val scanResults = mutableMapOf<String, BleValueBean>()
     private val listenerAttachedRemoteIds = mutableSetOf<String>()
@@ -70,25 +67,31 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
         eventChannel = EventChannel(binding.binaryMessenger, EVENT_CHANNEL)
         methodChannel.setMethodCallHandler(this)
         eventChannel.setStreamHandler(this)
+        ElinkNativeLogger.setEventHandler { level, message, timestampMs ->
+            eventEmitter.emitNativeLog(level, message, timestampMs)
+        }
         registerBluetoothStateReceiver()
         initVendorSdk()
+        ElinkNativeLogger.i("plugin attached")
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
+        ElinkNativeLogger.i("plugin detached")
+        ElinkNativeLogger.setEventHandler(null)
         unregisterBluetoothStateReceiver()
         disposeSdkResources()
         methodChannel.setMethodCallHandler(null)
         eventChannel.setStreamHandler(null)
-        eventSink = null
+        eventEmitter.eventSink = null
     }
 
     override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
-        eventSink = events
-        emitAdapterState()
+        eventEmitter.eventSink = events
+        eventEmitter.emitAdapterState(adapterStateName())
     }
 
     override fun onCancel(arguments: Any?) {
-        eventSink = null
+        eventEmitter.eventSink = null
     }
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
@@ -203,19 +206,22 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
                 else -> result.notImplemented()
             }
         } catch (throttled: ScanThrottledException) {
+            ElinkNativeLogger.w("method=${call.method} scan throttled retryAfterMs=${throttled.retryAfterMs}")
             val details = mapOf("retryAfterMs" to throttled.retryAfterMs)
             result.error("scan_throttled", throttled.message, details)
-            emitError(
+            eventEmitter.emitError(
                 "scan_throttled",
                 throttled.message ?: "Android BLE scan was throttled",
                 details
             )
         } catch (security: SecurityException) {
+            ElinkNativeLogger.e("method=${call.method} security error=${security.message}", security)
             result.error("permission_denied", security.message, null)
-            emitError("permission_denied", security.message ?: "Bluetooth permission denied")
+            eventEmitter.emitError("permission_denied", security.message ?: "Bluetooth permission denied")
         } catch (error: Throwable) {
+            ElinkNativeLogger.e("method=${call.method} error=${error.message ?: error}", error)
             result.error("elink_ble_error", error.message, null)
-            emitError("elink_ble_error", error.message ?: error.toString())
+            eventEmitter.emitError("elink_ble_error", error.message ?: error.toString())
         }
     }
 
@@ -227,7 +233,7 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
             override fun onReceive(context: Context?, intent: Intent?) {
                 if (intent?.action != BluetoothAdapter.ACTION_STATE_CHANGED) return
                 val state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)
-                emitAdapterState(state)
+                eventEmitter.emitAdapterState(adapterStateName(state))
             }
         }
         bluetoothStateReceiver = receiver
@@ -248,45 +254,63 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
 
     private fun initVendorSdk() {
         try {
-            BleLog.init(true)
+            ElinkNativeLogger.d("init vendor sdk")
             AILinkSDK.getInstance().init(context)
             AILinkBleManager.getInstance().init(context, object : AILinkBleManager.onInitListener {
                 override fun onInitSuccess() {
+                    ElinkNativeLogger.i("sdk init success")
                     sdkReady = true
                     sdkCallback = object : OnCallbackBle {
-                        override fun bleOpen() = emitAdapterState()
-                        override fun bleClose() = emitAdapterState()
+                        override fun bleOpen() {
+                            ElinkNativeLogger.i("adapter opened")
+                            eventEmitter.emitAdapterState(adapterStateName())
+                        }
+                        override fun bleClose() {
+                            ElinkNativeLogger.i("adapter closed")
+                            eventEmitter.emitAdapterState(adapterStateName())
+                        }
                         override fun onStartScan() {
+                            ElinkNativeLogger.i("scan started")
                             isScanning = true
                         }
                         override fun onScanTimeOut() {
+                            ElinkNativeLogger.w("scan timeout")
                             markScanStopped()
-                            emit(mapOf("type" to "scanStopped"))
+                            eventEmitter.emit(mapOf("type" to "scanStopped"))
                         }
                         override fun onScanErr(type: Int, time: Long) {
+                            ElinkNativeLogger.w("scan error type=$type time=$time")
                             markScanStopped()
                             emitScanError(type, time)
-                            emit(mapOf("type" to "scanStopped"))
+                            eventEmitter.emit(mapOf("type" to "scanStopped"))
                         }
                         override fun onScanning(data: BleValueBean?) {
                             if (data != null) {
+                                ElinkNativeLogger.d(
+                                    "scan result remoteId=${data.address} name=${data.name ?: ""} rssi=${data.rssi}"
+                                )
                                 scanResults[data.address] = data
-                                emitScanResult(data)
+                                eventEmitter.emitScanResult(data)
                             }
                         }
                         override fun onConnecting(mac: String?) {
-                            mac?.let { emitConnection(it, "connecting") }
+                            mac?.let {
+                                ElinkNativeLogger.i("connecting remoteId=$it")
+                                eventEmitter.emitConnection(it, "connecting")
+                            }
                         }
                         override fun onConnectionSuccess(mac: String?) {
                             mac?.let {
-                                emitConnection(it, "connected")
+                                ElinkNativeLogger.i("connected remoteId=$it")
+                                eventEmitter.emitConnection(it, "connected")
                                 attachDeviceListeners(it)
                             }
                         }
                         override fun onServicesDiscovered(mac: String?) {
                             mac?.let {
+                                ElinkNativeLogger.d("services discovered remoteId=$it")
                                 attachDeviceListeners(it)
-                                emit(
+                                eventEmitter.emit(
                                     mapOf(
                                         "type" to "servicesDiscovered",
                                         "remoteId" to it,
@@ -302,8 +326,9 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
                         }
                         override fun onDisConnected(mac: String?, code: Int) {
                             mac?.let {
+                                ElinkNativeLogger.i("disconnected remoteId=$it code=$code")
                                 listenerAttachedRemoteIds.remove(it)
-                                emitConnection(it, "disconnected", "code=$code")
+                                eventEmitter.emitConnection(it, "disconnected", "code=$code")
                             }
                         }
                     }
@@ -311,13 +336,15 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
                 }
 
                 override fun onInitFailure() {
+                    ElinkNativeLogger.e("sdk init failure")
                     sdkReady = false
-                    emitError("sdk_init_failure", "AILink Android SDK initialization failed")
+                    eventEmitter.emitError("sdk_init_failure", "AILink Android SDK initialization failed")
                 }
             })
         } catch (ignored: Throwable) {
+            ElinkNativeLogger.e("sdk init exception=${ignored.message ?: ignored}", ignored)
             sdkReady = false
-            emitError("sdk_init_failure", ignored.message ?: "AILink Android SDK initialization failed")
+            eventEmitter.emitError("sdk_init_failure", ignored.message ?: "AILink Android SDK initialization failed")
         }
     }
 
@@ -330,13 +357,14 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
         ensureCanStartScan()
         ensureBluetoothPoweredOn()
         val uuids = withServices.mapNotNull { service ->
-            runCatching { elinkUuid(service) }.getOrNull()
+            runCatching { ElinkAndroidUuid.elinkUuid(service) }.getOrNull()
         }
         val scanConfig = ScanConfig(
-            services = uuids.map { shortUuid(it) }.distinct().sorted(),
+            services = uuids.map { ElinkAndroidUuid.shortUuid(it) }.distinct().sorted(),
             scanMode = androidScanMode
         )
         if (isScanning && activeScanConfig == scanConfig) {
+            ElinkNativeLogger.w("startScan ignored, same active config=$scanConfig")
             return
         }
         val nowMs = SystemClock.elapsedRealtime()
@@ -351,6 +379,9 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
         recordScanStart(SystemClock.elapsedRealtime())
         isScanning = true
         activeScanConfig = scanConfig
+        ElinkNativeLogger.d(
+            "startScan timeoutMs=$timeoutMs services=${scanConfig.services} scanMode=${scanConfig.scanMode}"
+        )
         try {
             if (androidScanMode == null) {
                 AILinkBleManager.getInstance().startScan(timeoutMs, *uuids.toTypedArray())
@@ -364,10 +395,11 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
     }
 
     private fun stopScanInternal(emitStopped: Boolean = true) {
+        ElinkNativeLogger.d("stopScan emitStopped=$emitStopped")
         runCatching { AILinkBleManager.getInstance().stopScan() }
         markScanStopped()
         if (emitStopped) {
-            emit(mapOf("type" to "scanStopped"))
+            eventEmitter.emit(mapOf("type" to "scanStopped"))
         }
     }
 
@@ -380,7 +412,8 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
             throw SecurityException("Missing Bluetooth connect permission")
         }
         if (adapter.isEnabled) {
-            emitAdapterState(BluetoothAdapter.STATE_ON)
+            ElinkNativeLogger.d("openBluetooth skipped, already enabled")
+            eventEmitter.emitAdapterState(adapterStateName(BluetoothAdapter.STATE_ON))
             return
         }
         val requestIntent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
@@ -388,8 +421,10 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
         val settingsIntent = Intent(Settings.ACTION_BLUETOOTH_SETTINGS)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         try {
+            ElinkNativeLogger.i("openBluetooth request enable")
             context.startActivity(requestIntent)
         } catch (_: ActivityNotFoundException) {
+            ElinkNativeLogger.w("openBluetooth fallback settings")
             context.startActivity(settingsIntent)
         }
     }
@@ -403,7 +438,8 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
             throw IllegalArgumentException("remoteId is empty")
         }
         ensureBluetoothPoweredOn()
-        emitConnection(remoteId, "connecting")
+        ElinkNativeLogger.i("connect remoteId=$remoteId autoConnect=$autoConnect")
+        eventEmitter.emitConnection(remoteId, "connecting")
         val bleValue = scanResults[remoteId]
         if (bleValue != null && !autoConnect) {
             AILinkBleManager.getInstance().connectDevice(bleValue)
@@ -416,7 +452,8 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
         if (remoteId.isBlank()) {
             throw IllegalArgumentException("remoteId is empty")
         }
-        emitConnection(remoteId, "disconnecting")
+        ElinkNativeLogger.i("disconnect remoteId=$remoteId")
+        eventEmitter.emitConnection(remoteId, "disconnecting")
         AILinkBleManager.getInstance().disconnect(remoteId)
     }
 
@@ -428,6 +465,7 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
         ensureBluetoothPoweredOn()
         val device = AILinkBleManager.getInstance().getBleDevice(remoteId)
             ?: throw IllegalStateException("Device is not connected: $remoteId")
+        ElinkNativeLogger.d("readRssi remoteId=$remoteId")
         device.readRssi()
     }
 
@@ -442,6 +480,7 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
         }
         val device = AILinkBleManager.getInstance().getBleDevice(remoteId)
             ?: throw IllegalStateException("Device is not connected: $remoteId")
+        ElinkNativeLogger.d("setAndroidMtu remoteId=$remoteId mtu=$mtu")
         return device.setMtu(mtu)
     }
 
@@ -460,6 +499,7 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
         }
         val device = AILinkBleManager.getInstance().getBleDevice(remoteId)
             ?: throw IllegalStateException("Device is not connected: $remoteId")
+        ElinkNativeLogger.d("setAndroidPreferredPhy remoteId=$remoteId txPhy=$txPhy rxPhy=$rxPhy")
         return device.setPreferredPhy(txPhy, rxPhy)
     }
 
@@ -471,6 +511,9 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
             BleConfig.UUID_WRITE_NOTIFY_AILINK
         }
         val sendData = SendDataBean(data, writeUuid, BleConfig.WRITE_DATA, BleConfig.UUID_SERVER_AILINK)
+        ElinkNativeLogger.d(
+            "write remoteId=$remoteId type=$type uuid=${ElinkAndroidUuid.shortUuid(writeUuid)} data=${ElinkNativeLogger.hex(data)}"
+        )
         device.sendData(sendData)
     }
 
@@ -478,6 +521,7 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
         val device = writableDevice(remoteId)
         val sendBleBean = SendBleBean()
         sendBleBean.setHex(payload)
+        ElinkNativeLogger.d("writeA6 remoteId=$remoteId payload=${ElinkNativeLogger.hex(payload)}")
         device.sendData(sendBleBean)
     }
 
@@ -486,6 +530,7 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
         val device = writableDevice(remoteId)
         val sendBleBean = SendBleBean()
         sendBleBean.setHex(BleSendCmdUtil.getInstance().getBleVersion46())
+        ElinkNativeLogger.d("getBmVersion remoteId=$remoteId command=0x46")
         device.sendData(sendBleBean)
     }
 
@@ -494,6 +539,9 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
         val deviceType = cid ?: device.cid
         val sendMcuBean = SendMcuBean()
         sendMcuBean.setHex(deviceType, payload)
+        ElinkNativeLogger.d(
+            "writeA7 remoteId=$remoteId cid=$deviceType payload=${ElinkNativeLogger.hex(payload)}"
+        )
         device.sendData(sendMcuBean)
     }
 
@@ -515,6 +563,7 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
     private fun setAndroidCommandResendCountInternal(resendCount: Int) {
         if (resendCount < 0) return
         androidCommandResendCount = resendCount
+        ElinkNativeLogger.d("setAndroidCommandResendCount resendCount=$resendCount")
     }
 
     // 根据 Flutter 配置更新 Android SDK 指令发送失败重发开关。
@@ -531,237 +580,99 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
         applyCommandResendConfig(device)
         if (listenerAttachedRemoteIds.contains(remoteId)) return
         listenerAttachedRemoteIds.add(remoteId)
+        ElinkNativeLogger.d("attach device listeners remoteId=$remoteId")
         // SDK 会先回调带 uuid 的 default method，再回调不带 uuid 的 method。
         // Use only UUID callbacks to avoid forwarding the same packet twice.
         device.setOnBleDeviceDataListener(object : OnBleDeviceDataListener {
             override fun onNotifyData(uuid: String, data: ByteArray, type: Int) {
-                emitProtocolData(remoteId, "a7", data, uuid, type)
+                ElinkNativeLogger.d(
+                    "receiveA7 remoteId=$remoteId uuid=${ElinkAndroidUuid.shortUuidString(uuid)} type=$type data=${ElinkNativeLogger.hex(data)}"
+                )
+                eventEmitter.emitProtocolData(remoteId, "a7", data, uuid, type)
             }
 
             override fun onNotifyDataA6(uuid: String, data: ByteArray) {
-                emitProtocolData(remoteId, "a6", data, uuid, null)
+                ElinkNativeLogger.d(
+                    "receiveA6 remoteId=$remoteId uuid=${ElinkAndroidUuid.shortUuidString(uuid)} data=${ElinkNativeLogger.hex(data)}"
+                )
+                eventEmitter.emitProtocolData(remoteId, "a6", data, uuid, null)
             }
         })
         // 使用 Android SDK 自身的握手结果，避免 Flutter 层重复回复 A6 握手指令。
         device.setOnBleHandshakeListener(object : OnBleHandshakeListener {
             override fun onHandshake(status: Boolean) {
-                emitHandshake(remoteId, status)
+                ElinkNativeLogger.i("handshake remoteId=$remoteId success=$status")
+                eventEmitter.emitHandshake(remoteId, status)
             }
         })
         // 使用 SDK 的 BM 版本解析回调，0x46 分片拼接由底层统一处理。
         device.setOnBleVersionListener(object : OnBleVersionListener {
             override fun onBmVersion(version: String) {
-                emitBmVersion(remoteId, version, 0x0E)
+                ElinkNativeLogger.i("bmVersion remoteId=$remoteId command=0x0E version=$version")
+                eventEmitter.emitBmVersion(remoteId, version, 0x0E)
             }
 
             override fun onBmVersion46(version: String) {
-                emitBmVersion(remoteId, version, 0x46)
+                ElinkNativeLogger.i("bmVersion remoteId=$remoteId command=0x46 version=$version")
+                eventEmitter.emitBmVersion(remoteId, version, 0x46)
             }
         })
         // 同上，只接收带 uuid 的透传入口。
         // Same rule for passthrough data: consume the UUID overload only.
         device.setOnBleOtherDataListener(object : OnBleOtherDataListener {
             override fun onNotifyOtherData(uuid: String, data: ByteArray) {
-                emitPassthroughData(remoteId, data, uuid)
+                ElinkNativeLogger.d(
+                    "receiveRaw remoteId=$remoteId uuid=${ElinkAndroidUuid.shortUuidString(uuid)} data=${ElinkNativeLogger.hex(data)}"
+                )
+                eventEmitter.emitPassthroughData(remoteId, data, uuid)
             }
         })
         device.setOnCharacteristicListener(object : OnCharacteristicListener {
             override fun onCharacteristicReadOK(characteristic: BluetoothGattCharacteristic) {
-                emitCharacteristicEvent(remoteId, "read", characteristic)
+                ElinkNativeLogger.d(
+                    "characteristic read remoteId=$remoteId uuid=${ElinkAndroidUuid.shortUuid(characteristic.uuid)}"
+                )
+                eventEmitter.emitCharacteristicEvent(remoteId, "read", characteristic)
             }
 
             override fun onCharacteristicWriteOK(characteristic: BluetoothGattCharacteristic) {
-                emitCharacteristicEvent(remoteId, "write", characteristic)
+                ElinkNativeLogger.d(
+                    "characteristic write remoteId=$remoteId uuid=${ElinkAndroidUuid.shortUuid(characteristic.uuid)}"
+                )
+                eventEmitter.emitCharacteristicEvent(remoteId, "write", characteristic)
             }
 
             override fun onDescriptorWriteOK(descriptor: BluetoothGattDescriptor) {
-                emitCharacteristicEvent(remoteId, "descriptorWrite", descriptor)
+                ElinkNativeLogger.d(
+                    "descriptor write remoteId=$remoteId uuid=${ElinkAndroidUuid.shortUuid(descriptor.uuid)}"
+                )
+                eventEmitter.emitCharacteristicEvent(remoteId, "descriptorWrite", descriptor)
             }
 
             override fun onCharacteristicChanged(characteristic: BluetoothGattCharacteristic) {
-                emitCharacteristicEvent(remoteId, "changed", characteristic)
+                ElinkNativeLogger.d(
+                    "characteristic changed remoteId=$remoteId uuid=${ElinkAndroidUuid.shortUuid(characteristic.uuid)}"
+                )
+                eventEmitter.emitCharacteristicEvent(remoteId, "changed", characteristic)
             }
         })
         device.setOnBleRssiListener(object : OnBleRssiListener {
             override fun OnRssi(rssi: Int) {
-                emitRssi(remoteId, rssi)
+                ElinkNativeLogger.d("rssi remoteId=$remoteId rssi=$rssi")
+                eventEmitter.emitRssi(remoteId, rssi)
             }
         })
         device.setOnBleMtuListener(object : OnBleMtuListener {
             override fun OnMtu(mtu: Int) {
-                emitMtu(remoteId, mtu, null)
+                ElinkNativeLogger.d("mtu remoteId=$remoteId mtu=$mtu")
+                eventEmitter.emitMtu(remoteId, mtu, null)
             }
 
             override fun onMtuAvailable(mtu: Int) {
-                emitMtu(remoteId, null, mtu)
+                ElinkNativeLogger.d("mtuAvailable remoteId=$remoteId availableMtu=$mtu")
+                eventEmitter.emitMtu(remoteId, null, mtu)
             }
         })
-    }
-
-    private fun emitScanResult(result: BleValueBean) {
-        val serviceUuids = result.parcelUuids?.map { shortUuid(it.uuid) } ?: emptyList()
-        val manufacturerData = result.manufacturerData ?: byteArrayOf()
-        emit(
-            mapOf(
-                "type" to "scanResult",
-                "remoteId" to result.address,
-                "platformName" to (result.name ?: ""),
-                "macAddress" to result.address,
-                "rssi" to result.rssi,
-                "advertisementData" to mapOf(
-                    "advName" to (result.name ?: ""),
-                    "serviceUuids" to serviceUuids,
-                    "manufacturerData" to manufacturerData
-                )
-            )
-        )
-    }
-
-    private fun emitProtocolData(
-        remoteId: String,
-        protocol: String,
-        data: ByteArray,
-        characteristicUuid: String,
-        deviceType: Int?
-    ) {
-        emit(
-            mapOf(
-                "type" to "protocolData",
-                "remoteId" to remoteId,
-                "protocol" to protocol,
-                "characteristicUuid" to shortUuidString(characteristicUuid),
-                "deviceType" to deviceType,
-                "data" to data
-            )
-        )
-    }
-
-    // 上报原生 SDK 握手状态给 Dart 层。
-    private fun emitHandshake(remoteId: String, success: Boolean) {
-        emit(
-            mapOf(
-                "type" to "handshake",
-                "remoteId" to remoteId,
-                "success" to success
-            )
-        )
-    }
-
-    // 上报原生 SDK 解析后的 BM 版本。
-    private fun emitBmVersion(remoteId: String, version: String, command: Int) {
-        emit(
-            mapOf(
-                "type" to "bmVersion",
-                "remoteId" to remoteId,
-                "version" to version,
-                "command" to command,
-                "rawPayload" to byteArrayOf(command.toByte())
-            )
-        )
-    }
-
-    private fun emitPassthroughData(remoteId: String, data: ByteArray, characteristicUuid: String) {
-        emit(
-            mapOf(
-                "type" to "passthroughData",
-                "remoteId" to remoteId,
-                "characteristicUuid" to shortUuidString(characteristicUuid),
-                "data" to data
-            )
-        )
-    }
-
-    private fun emitCharacteristicEvent(
-        remoteId: String,
-        operation: String,
-        characteristic: BluetoothGattCharacteristic
-    ) {
-        emit(
-            mapOf(
-                "type" to "characteristicEvent",
-                "remoteId" to remoteId,
-                "operation" to operation,
-                "serviceUuid" to shortUuid(characteristic.service.uuid),
-                "characteristicUuid" to shortUuid(characteristic.uuid),
-                "descriptorUuid" to "",
-                "data" to (characteristic.value ?: byteArrayOf())
-            )
-        )
-    }
-
-    private fun emitCharacteristicEvent(
-        remoteId: String,
-        operation: String,
-        descriptor: BluetoothGattDescriptor
-    ) {
-        val characteristic = descriptor.characteristic
-        emit(
-            mapOf(
-                "type" to "characteristicEvent",
-                "remoteId" to remoteId,
-                "operation" to operation,
-                "serviceUuid" to shortUuid(characteristic.service.uuid),
-                "characteristicUuid" to shortUuid(characteristic.uuid),
-                "descriptorUuid" to shortUuid(descriptor.uuid),
-                "data" to (descriptor.value ?: byteArrayOf())
-            )
-        )
-    }
-
-    private fun emitRssi(remoteId: String, rssi: Int) {
-        emit(
-            mapOf(
-                "type" to "rssi",
-                "remoteId" to remoteId,
-                "rssi" to rssi
-            )
-        )
-    }
-
-    private fun emitMtu(remoteId: String, mtu: Int?, availableMtu: Int?) {
-        emit(
-            mapOf(
-                "type" to "mtu",
-                "remoteId" to remoteId,
-                "mtu" to mtu,
-                "availableMtu" to availableMtu
-            )
-        )
-    }
-
-    private fun emitAdapterState() {
-        emit(mapOf("type" to "adapterState", "state" to adapterStateName()))
-    }
-
-    private fun emitAdapterState(adapterState: Int) {
-        emit(mapOf("type" to "adapterState", "state" to adapterStateName(adapterState)))
-    }
-
-    private fun emitConnection(remoteId: String, state: String, reason: String? = null) {
-        emit(
-            mapOf(
-                "type" to "connectionState",
-                "remoteId" to remoteId,
-                "state" to state,
-                "reason" to reason
-            )
-        )
-    }
-
-    private fun emitError(code: String, message: String, details: Map<String, Any?>? = null) {
-        val event = mutableMapOf<String, Any?>(
-            "type" to "error",
-            "code" to code,
-            "message" to message
-        )
-        if (details != null) {
-            event["details"] = details
-        }
-        emit(event)
-    }
-
-    private fun emit(event: Map<String, Any?>) {
-        handler.post { eventSink?.success(event) }
     }
 
     private fun adapterStateName(): String {
@@ -902,13 +813,13 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
             val retryAfterMs = scanThrottleRetryAfterMs(
                 SystemClock.elapsedRealtime()
             ).coerceAtLeast(ANDROID_SCAN_RESTART_COOLDOWN_MS)
-            emitError(
+            eventEmitter.emitError(
                 "scan_throttled",
                 "$message; retry after ${retryAfterMs}ms",
                 mapOf("scanErrorType" to type, "time" to time, "retryAfterMs" to retryAfterMs)
             )
         } else {
-            emitError("scan_error", message, mapOf("scanErrorType" to type, "time" to time))
+            eventEmitter.emitError("scan_error", message, mapOf("scanErrorType" to type, "time" to time))
         }
     }
 
@@ -956,32 +867,6 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
 
     private fun decryptBroadcast(payload: ByteArray): ByteArray? {
         return ElinkBleCrypto.decryptBroadcast(payload)
-    }
-
-    private fun shortUuid(uuid: UUID): String {
-        val text = uuid.toString().uppercase(Locale.US)
-        return if (text.startsWith("0000") && text.endsWith("-0000-1000-8000-00805F9B34FB")) {
-            text.substring(4, 8)
-        } else {
-            text
-        }
-    }
-
-    private fun shortUuidString(uuid: String): String {
-        return if (uuid.isBlank()) {
-            ""
-        } else {
-            runCatching { shortUuid(elinkUuid(uuid)) }.getOrElse { uuid.uppercase(Locale.US) }
-        }
-    }
-
-    private fun elinkUuid(shortOrFullUuid: String): UUID {
-        val upper = shortOrFullUuid.uppercase(Locale.US)
-        return if (upper.length == 4) {
-            UUID.fromString("0000$upper-0000-1000-8000-00805F9B34FB")
-        } else {
-            UUID.fromString(upper)
-        }
     }
 
     private fun disposeSdkResources() {

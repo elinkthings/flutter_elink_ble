@@ -43,6 +43,11 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
   /// Android 示例默认请求的 GATT MTU。
   static const int _defaultAndroidMtu = 517;
 
+  /// 从 native 日志 message 中提取 remoteId 的正则。
+  static final RegExp _nativeLogRemoteIdPattern = RegExp(
+    r'\bremoteId=([^\s,;]+)',
+  );
+
   final List<StreamSubscription<Object?>> _subscriptions = [];
   final Map<String, List<String>> _deviceLogs = <String, List<String>>{};
   final Set<String> _handshakeReadyRemoteIds = <String>{};
@@ -206,6 +211,7 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
           );
         }),
       )
+      ..add(ElinkBle.nativeLogEvents.listen(_handleNativeLog))
       ..add(
         ElinkBle.errors.listen((error) {
           final remoteId = _remoteIdFromError(error);
@@ -721,6 +727,36 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
     final length = parseTlv ? ', length: ${payload.length}' : '';
     return '{type: 0x${payload.type.toRadixString(16).padLeft(2, '0').toUpperCase()}'
         '$length, data: $data}';
+  }
+
+  /// 输出 native 日志，并在能识别设备时同步到对应设备 tab。
+  void _handleNativeLog(ElinkNativeLogEvent event) {
+    debugPrint(event.toFlutterLogLine());
+    final remoteId = event.remoteId ?? _remoteIdFromNativeLog(event.message);
+    if (remoteId == null || !_shouldAttachNativeLogToDevice(remoteId)) {
+      return;
+    }
+    _addDeviceLog(
+      remoteId,
+      '[nativeLog][${event.platform}][${event.level.shortName}] '
+      '${event.message}',
+    );
+  }
+
+  /// 从 native 日志 message 中解析 remoteId。
+  String? _remoteIdFromNativeLog(String message) {
+    final remoteId = _nativeLogRemoteIdPattern.firstMatch(message)?.group(1);
+    if (remoteId == null || remoteId.isEmpty) {
+      return null;
+    }
+    return remoteId;
+  }
+
+  /// 判断 native 日志是否应该进入设备 tab，避免扫描阶段为大量未连接设备创建日志缓存。
+  bool _shouldAttachNativeLogToDevice(String remoteId) {
+    return _deviceLogs.containsKey(remoteId) ||
+        _connectedRemoteIds.contains(remoteId) ||
+        _selectedRemoteId == remoteId;
   }
 
   /// 记录指定设备 tab 的日志，并限制单设备日志数量。

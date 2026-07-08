@@ -76,6 +76,108 @@ enum ElinkConnectionState {
   }
 }
 
+/// Native 插件日志等级，用于区分调试、信息、警告和错误。
+/// Native plugin log level.
+enum ElinkNativeLogLevel {
+  /// Debug 日志。
+  /// Debug log.
+  debug,
+
+  /// Info 日志。
+  /// Info log.
+  info,
+
+  /// Warning 日志。
+  /// Warning log.
+  warning,
+
+  /// Error 日志。
+  /// Error log.
+  error;
+
+  /// 将 native 传来的等级文本转成 Dart enum。
+  /// Convert native log level text into Dart enum.
+  static ElinkNativeLogLevel fromName(Object? value) {
+    switch (value?.toString().toUpperCase()) {
+      case 'D':
+      case 'DEBUG':
+        return ElinkNativeLogLevel.debug;
+      case 'W':
+      case 'WARN':
+      case 'WARNING':
+        return ElinkNativeLogLevel.warning;
+      case 'E':
+      case 'ERROR':
+        return ElinkNativeLogLevel.error;
+      case 'I':
+      case 'INFO':
+      default:
+        return ElinkNativeLogLevel.info;
+    }
+  }
+
+  /// 原生日志短等级，保持和 iOS/Android 常见 D/I/W/E 一致。
+  /// Short level name matching common iOS/Android D/I/W/E logs.
+  String get shortName {
+    return switch (this) {
+      ElinkNativeLogLevel.debug => 'D',
+      ElinkNativeLogLevel.info => 'I',
+      ElinkNativeLogLevel.warning => 'W',
+      ElinkNativeLogLevel.error => 'E',
+    };
+  }
+}
+
+/// Native 插件日志事件，由 iOS/Android 通过 EventChannel 上报。
+/// Native plugin log event emitted through EventChannel.
+class ElinkNativeLogEvent {
+  /// 创建 native 插件日志事件。
+  /// Create a native plugin log event.
+  const ElinkNativeLogEvent({
+    required this.platform,
+    required this.level,
+    required this.message,
+    required this.time,
+    this.remoteId,
+  });
+
+  final String platform;
+  final ElinkNativeLogLevel level;
+  final String message;
+  final DateTime time;
+
+  /// 日志关联的 BLE remoteId；native 未提供结构化字段时为 null。
+  /// BLE remoteId associated with this log; null when native does not provide it.
+  final String? remoteId;
+
+  /// 从 native event map 解析日志事件。
+  /// Parse a native log event from native event map.
+  factory ElinkNativeLogEvent.fromMap(Map<dynamic, dynamic> map) {
+    final timestampMs = (map['timestampMs'] as num?)?.toInt();
+    return ElinkNativeLogEvent(
+      platform: map['platform']?.toString() ?? '',
+      level: ElinkNativeLogLevel.fromName(map['level']),
+      message: map['message']?.toString() ?? '',
+      remoteId: _blankToNull(map['remoteId']?.toString()),
+      time: timestampMs == null
+          ? DateTime.now()
+          : DateTime.fromMillisecondsSinceEpoch(timestampMs),
+    );
+  }
+
+  /// 转成 Flutter 侧统一输出的日志文本。
+  /// Convert to a unified Flutter-side log line.
+  String toFlutterLogLine() {
+    final platformName = platform.isEmpty ? 'native' : platform;
+    return '[FlutterElinkBle][$platformName][${level.shortName}] $message';
+  }
+}
+
+String? _blankToNull(String? value) {
+  final normalized = value?.trim();
+  return normalized == null || normalized.isEmpty ? null : normalized;
+}
+
 /// 写入类型。
 /// GATT write type.
 enum ElinkWriteType {

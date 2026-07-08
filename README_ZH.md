@@ -15,6 +15,7 @@ ElinkThings BLE SDK 的 Flutter 插件。用于监听 Bluetooth adapter state、
 - 解析 Elink manufacturer data 中的 `CID`、`VID`、`PID`、`MAC`
 - Android 可请求 MTU，iOS 可按 `remoteId` 查询目标连接的最大写入长度
 - Flutter 可控制 Android SDK 指令发送失败重发次数，默认关闭，`resendCount >= 1` 开启
+- Flutter 可通过 `ElinkBle.nativeLogEvents` 接收 Android/iOS native 插件调试日志事件
 - 在 Dart 层统一构造 WiFi A6 配网指令，并通过 `writeA6` 下发
 - 解析 WiFi 扫描、状态、响应、MAC、SSID、密码、SN 与服务端配置事件
 - 支持 WiFi 指令日志开关，默认关闭
@@ -32,7 +33,7 @@ flutter pub add flutter_elink_ble
 
 ```yaml
 dependencies:
-  flutter_elink_ble: ^0.2.4
+  flutter_elink_ble: ^0.3.0
 ```
 
 ## Android 配置
@@ -89,6 +90,24 @@ iOS 多连时，每个 `remoteId` 会使用独立的 `ELAILinkBleManager` sessio
 iOS 上依赖已就绪连接的操作，例如 RSSI、写入、A6/A7 指令、BM 版本查询和 MTU 查询，如果目标 `remoteId` 未连接，会返回 `device_not_connected` platform error，同时继续上报原生错误事件。旧 session 的断开回调只允许清理自己创建的连接，重新连接同一个 `remoteId` 不会再被旧回调误删。
 
 如果 iOS 蓝牙已打开但扫描失败，先确认宿主 App 是否已加入上述权限文案，并在系统设置中允许蓝牙权限。Native 层会区分 `bluetooth_off`、`bluetooth_unauthorized`、`bluetooth_unsupported` 与 `bluetooth_not_ready`，避免把权限或初始化中的状态误报为蓝牙关闭。
+
+## Native 调试日志
+
+Native 插件日志事件会通过 Dart stream 暴露。排查 BLE 问题或写入可导出日志时订阅：
+
+```dart
+final subscription = ElinkBle.nativeLogEvents.listen((event) {
+  // 转发到业务日志或诊断日志导出。
+  print(event.toFlutterLogLine());
+});
+```
+
+日志事件会覆盖扫描、连接、断开、写入、A6/A7 协议回调、RSSI、MTU
+和 native 错误路径。排查完成后取消订阅：
+
+```dart
+await subscription.cancel();
+```
 
 ## 快速使用
 
@@ -186,6 +205,8 @@ final bmVersionSub = ElinkBle.bmVersionEvents.listen((event) {
 ```
 
 <p><font color="red"><strong>Android 注意：</strong>部分 Android BLE 模块需要先完成 GATT MTU 协商，BM 版本查询才会返回结果。若调用 <code>ElinkBle.getBmVersion()</code> 后没有收到 <code>bmVersionEvents</code>，建议在连接和服务发现完成后先调用 <code>ElinkBle.setAndroidMtu(remoteId, 517)</code>，收到 <code>ElinkBle.mtuEvents</code> 后再查询 BM 版本。</font></p>
+
+<p><font color="red"><strong>连接注意：</strong>部分模块刚启动时广播里的 <code>CID/VID/PID</code> 会短暂保持启动默认值 <code>0/0/0</code>。不要用这类扫描结果立即连接；应继续扫描，等最新 <code>result.advertisementData.identity</code> 中的 <code>CID</code>、<code>VID</code>、<code>PID</code> 变为目标产品的真实值后，再使用该扫描结果发起连接。</font></p>
 
 连接并写入数据：
 
@@ -453,6 +474,7 @@ Native events 会被 Dart 层归一化成以下 streams：
 
 - 扫描前请先确认 `ElinkBle.bluetoothStateNow == ElinkAdapterState.on`，否则 Android/iOS SDK 都可能拒绝 scan。
 - Android 7.0+ 对 BLE scan 有系统限流，30 秒内不要反复 `startScan` 超过 5 次。插件会复用相同配置的进行中扫描，并在 Android 原生层拦截过快的重启，返回 `scan_throttled` 和 `retryAfterMs`。
+- 部分模块刚启动时会在广播中上报默认 `CID/VID/PID = 0/0/0`。业务侧应继续扫描，等最新 `ElinkScanResult.advertisementData.identity` 中的产品标识变为真实值后再连接。
 - iOS 的 `remoteId` 是 `CBPeripheral.identifier`，不是设备 MAC address。
 - iOS 多连按 `remoteId` 维护独立 `ELAILinkBleManager` session；写入或断开时必须传目标设备的 `remoteId`。
 - iOS 按连接执行的操作在目标 session 未就绪时会返回 `device_not_connected`，业务侧应按 platform exception 处理。

@@ -25,6 +25,8 @@ WiFi provisioning commands are built in Dart and sent through the shared `writeA
 - Request Android MTU changes and read iOS maximum write lengths.
 - Configure Android SDK command resend count from Flutter. It is disabled by
   default and enabled when `resendCount >= 1`.
+- Receive Android/iOS native debug log events through
+  `ElinkBle.nativeLogEvents`.
 - Run WiFi provisioning commands from Dart and listen for typed WiFi events.
 - Use native SDK helpers for broadcast decrypt, MCU A7 encrypt/decrypt, and handshake; Flutter only bridges the native handshake result.
 
@@ -40,7 +42,7 @@ Or add it manually to `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  flutter_elink_ble: ^0.2.4
+  flutter_elink_ble: ^0.3.0
 ```
 
 ## Android Setup
@@ -96,6 +98,25 @@ Each iOS connection is handled by its own `ELAILinkBleManager` session so the SD
 iOS operations that require a ready connection, such as RSSI reads, writes, A6/A7 commands, BM version queries, and MTU reads, return a `device_not_connected` platform error when the target `remoteId` is not connected. Old disconnect callbacks are scoped to the session that created them, so reconnecting the same `remoteId` is not invalidated by stale callbacks.
 
 If Bluetooth is on but scanning fails on iOS, check the host app permission text and the app's Bluetooth permission in iOS Settings. Native errors are normalized as `bluetooth_off`, `bluetooth_unauthorized`, `bluetooth_unsupported`, or `bluetooth_not_ready`.
+
+## Native Debug Logs
+
+Native plugin log events are exposed through Dart streams. Subscribe only while
+diagnosing BLE issues or writing an exportable log:
+
+```dart
+final subscription = ElinkBle.nativeLogEvents.listen((event) {
+  // Forward to your app logger or diagnostic export.
+  print(event.toFlutterLogLine());
+});
+```
+
+The events include scan, connect, disconnect, write, A6/A7 protocol callbacks,
+RSSI, MTU, and native error paths. Cancel the subscription after diagnosis:
+
+```dart
+await subscription.cancel();
+```
 
 ## Quick Start
 
@@ -195,6 +216,8 @@ final bmVersionSub = ElinkBle.bmVersionEvents.listen((event) {
 ```
 
 <p><font color="red"><strong>Android note:</strong> Some Android BLE modules only return the BM version after the GATT MTU has been negotiated. If <code>bmVersionEvents</code> is not emitted after <code>ElinkBle.getBmVersion()</code>, call <code>ElinkBle.setAndroidMtu(remoteId, 517)</code> after connection/service discovery, wait for <code>ElinkBle.mtuEvents</code>, then query the BM version again.</font></p>
+
+<p><font color="red"><strong>Connection note:</strong> Some modules advertise the boot default <code>CID/VID/PID = 0/0/0</code> for a short time after power-on. Do not connect from that scan result. Keep scanning and wait until <code>result.advertisementData.identity</code> contains the real <code>CID</code>, <code>VID</code>, and <code>PID</code> for the target product, then connect with that updated scan result.</font></p>
 
 Connect and write:
 
@@ -428,6 +451,7 @@ WiFi-specific Dart streams:
 - Check `ElinkBle.bluetoothStateNow == ElinkAdapterState.on` before scanning.
 - Use `ElinkBle.openBluetooth()` to guide the user to enable Bluetooth. Android opens the system enable prompt or Bluetooth settings; iOS cannot turn Bluetooth on directly, so the plugin only refreshes current state and does not open Settings. Listen to `ElinkBle.bluetoothState` for the final state.
 - Android 7.0+ throttles BLE scanning; avoid more than 5 `startScan` calls in 30 seconds. The plugin reuses an active scan with the same configuration and blocks too-fast Android restarts with `scan_throttled` and `retryAfterMs`.
+- Some modules report boot default `CID/VID/PID = 0/0/0` in early advertisements. Keep scanning until the latest `ElinkScanResult.advertisementData.identity` contains the real product identifiers before connecting.
 - iOS `remoteId` is `CBPeripheral.identifier`, not a MAC address.
 - iOS multi-device connections use one `ELAILinkBleManager` session per
   `remoteId`; always pass the target `remoteId` when writing or disconnecting.

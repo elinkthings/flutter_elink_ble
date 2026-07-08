@@ -1430,6 +1430,30 @@ void main() {
     expect(event.availableMtu, 244);
   });
 
+  test('event stream parses native log events', () async {
+    final fakePlatform = MockElinkBlePlatform();
+    FlutterElinkBlePlatform.instance = fakePlatform;
+    final nextNativeLog = ElinkBle.nativeLogEvents.first;
+
+    fakePlatform.eventController.add({
+      'type': 'nativeLog',
+      'platform': 'iOS',
+      'level': 'W',
+      'message': 'disconnect remoteId=remote-1',
+      'timestampMs': 1710000000123,
+    });
+
+    final event = await nextNativeLog;
+    expect(event.platform, 'iOS');
+    expect(event.level, ElinkNativeLogLevel.warning);
+    expect(event.message, 'disconnect remoteId=remote-1');
+    expect(event.time.millisecondsSinceEpoch, 1710000000123);
+    expect(
+      event.toFlutterLogLine(),
+      '[FlutterElinkBle][iOS][W] disconnect remoteId=remote-1',
+    );
+  });
+
   test('event stream emits native enhanced BM version', () async {
     final fakePlatform = MockElinkBlePlatform();
     FlutterElinkBlePlatform.instance = fakePlatform;

@@ -1,3 +1,16 @@
+## 0.3.0
+
+* Fixed iOS active disconnect sequencing by keeping the session delegate alive
+  until the real `managerDidDisconnect` callback completes.
+* Delayed the native `disconnect` MethodChannel result until iOS session cleanup
+  is complete, preventing immediate reconnects from racing the previous
+  CoreBluetooth disconnect.
+* Kept iOS writes scoped to ready sessions so command failures are surfaced
+  instead of being silently ignored.
+* Added `ElinkBle.nativeLogEvents` / `ElinkBle.nativeLogs` to expose
+  Android/iOS plugin debug log events for business-side output or export,
+  covering scan, connect, disconnect, write, and protocol callback paths.
+
 ## 0.2.4
 
 * Fixed iOS session cleanup so stale async callbacks from an old connection can
