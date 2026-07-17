@@ -54,6 +54,7 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
   List<ElinkScanResult> _scanResults = const <ElinkScanResult>[];
   ElinkAdapterState _adapterState = ElinkBle.adapterStateNow;
   bool _isScanning = false;
+  bool _isDisposing = false;
   bool _enableTlvParse = false;
   int _androidCommandResendCount = 0;
   final Set<String> _connectedRemoteIds = <String>{};
@@ -238,6 +239,18 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
       appBar: AppBar(
         title: const Text('Elink BLE'),
         actions: [
+          TextButton.icon(
+            onPressed: _isDisposing
+                ? null
+                : () => unawaited(_disposeBleResources()),
+            icon: _isDisposing
+                ? const SizedBox.square(
+                    dimension: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.power_settings_new),
+            label: Text(_isDisposing ? 'Disposing' : 'dispose()'),
+          ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Center(child: Text(_adapterState.name)),
@@ -496,6 +509,41 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
       await ElinkBle.stopScan();
     } catch (error) {
       debugPrint('[stopScan] $error');
+    }
+  }
+
+  /// 主动释放插件资源；App 进入后台不会调用此方法，因此不会自动断开连接。
+  Future<void> _disposeBleResources() async {
+    if (_isDisposing) {
+      return;
+    }
+    setState(() => _isDisposing = true);
+    try {
+      await ElinkBle.dispose();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isDisposing = false;
+        _isScanning = false;
+        _scanResults = const <ElinkScanResult>[];
+        _connectedRemoteIds.clear();
+        _connectedMacAddresses.clear();
+        _bmVersions.clear();
+        _handshakeReadyRemoteIds.clear();
+        _selectedRemoteId = null;
+      });
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('BLE resources disposed')));
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() => _isDisposing = false);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('dispose() failed: $error')));
     }
   }
 

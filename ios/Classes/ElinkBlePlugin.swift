@@ -9,6 +9,7 @@ public class ElinkBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
 
   let bleManager = ELAILinkBleManager()
   private var methodChannel: FlutterMethodChannel?
+  private var eventChannel: FlutterEventChannel?
   var eventSink: FlutterEventSink?
   private var scanTimer: Timer?
   var scanResults: [String: ELAILinkPeripheral] = [:]
@@ -19,6 +20,7 @@ public class ElinkBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
   var defaultHandshakeSeed: Data?
   var nativeScanRunning = false
   var suppressedScanStoppedCallbacks = 0
+  private var engineResourcesReleased = false
 
   public static func register(with registrar: FlutterPluginRegistrar) {
     let instance = ElinkBlePlugin()
@@ -31,8 +33,10 @@ public class ElinkBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
       binaryMessenger: registrar.messenger()
     )
     instance.methodChannel = methodChannel
-    methodChannel.setMethodCallHandler(instance.handle)
+    instance.eventChannel = eventChannel
+    registrar.addMethodCallDelegate(instance, channel: methodChannel)
     eventChannel.setStreamHandler(instance)
+    registrar.publish(instance)
   }
 
   override init() {
@@ -46,8 +50,12 @@ public class ElinkBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
   }
 
   deinit {
-    ElinkNativeLogger.setEventHandler(nil)
-    bleManager.ailinkDelegate = nil
+    disposeEngineResources()
+  }
+
+  /// FlutterEngine 移除插件时释放当前 Engine 持有的全部 iOS BLE session。
+  public func detachFromEngine(for registrar: FlutterPluginRegistrar) {
+    disposeEngineResources()
   }
 
   public func onListen(
@@ -55,7 +63,12 @@ public class ElinkBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
     eventSink events: @escaping FlutterEventSink
   ) -> FlutterError? {
     eventSink = events
+    lastConnectionEventKeys.removeAll()
     emitAdapterState()
+    deviceSessions.forEach { remoteId, session in
+      guard let state = session.currentConnectionStateName else { return }
+      emitConnection(remoteId: remoteId, state: state)
+    }
     return nil
   }
 
@@ -269,7 +282,7 @@ public class ElinkBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
         result(FlutterStandardTypedData(bytes: Data()))
       }
     case "dispose":
-      disposeSdkResources()
+      disposeDartSessionResources()
       result(nil)
     default:
       result(FlutterMethodNotImplemented)
@@ -464,8 +477,8 @@ public class ElinkBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
     return nil
   }
 
-  private func disposeSdkResources() {
-    ElinkNativeLogger.info("dispose sdk resources")
+  /// 释放插件托管的扫描和连接资源，可由主动 dispose 与 Engine detach 安全重复调用。
+  private func disposeManagedBleResources() {
     stopScan(emitStopped: false)
     deviceSessions.values.forEach { $0.dispose() }
     scanResults.removeAll()
@@ -474,6 +487,27 @@ public class ElinkBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
     handshakeSeeds.removeAll()
     defaultHandshakeSeed = nil
     lastConnectionEventKeys.removeAll()
+  }
+
+  /// 主动 dispose 时断开全部设备 session，同时保留当前 Engine 的 SDK delegate。
+  private func disposeDartSessionResources() {
+    ElinkNativeLogger.info("dispose dart session resources")
+    disposeManagedBleResources()
+  }
+
+  /// 释放 FlutterEngine 持有的 Channel、SDK delegate 和全部设备 session。
+  private func disposeEngineResources() {
+    guard !engineResourcesReleased else { return }
+    engineResourcesReleased = true
+    ElinkNativeLogger.info("dispose engine resources")
+    eventSink = nil
+    methodChannel?.setMethodCallHandler(nil)
+    eventChannel?.setStreamHandler(nil)
+    disposeManagedBleResources()
+    bleManager.ailinkDelegate = nil
+    ElinkNativeLogger.setEventHandler(nil)
+    methodChannel = nil
+    eventChannel = nil
   }
 
   func adapterStateName(_ state: CBManagerState) -> String {

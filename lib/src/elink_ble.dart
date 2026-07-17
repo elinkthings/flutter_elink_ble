@@ -621,8 +621,9 @@ class ElinkBle {
     _setAdapterState(ElinkAdapterState.fromName(result['state']));
   }
 
-  /// 释放 event subscription 和 native 连接资源。
-  /// Release event subscription and native connection resources.
+  /// 释放 event subscription、停止扫描并断开插件托管的全部 BLE 连接。
+  /// Release event subscriptions, stop scanning, and disconnect every BLE
+  /// connection managed by this plugin.
   static Future<void> dispose() async {
     await _adapterStateCallbackSub?.cancel();
     _adapterStateCallbackSub = null;

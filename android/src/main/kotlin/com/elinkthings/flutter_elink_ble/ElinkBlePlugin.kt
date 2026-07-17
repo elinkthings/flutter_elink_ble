@@ -51,9 +51,11 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
     private var bluetoothAdapter: BluetoothAdapter? = null
     private val scanResults = mutableMapOf<String, BleValueBean>()
     private val listenerAttachedRemoteIds = mutableSetOf<String>()
+    private val managedConnections = ElinkAndroidConnectionRegistry()
     private var bluetoothStateReceiver: BroadcastReceiver? = null
     private var sdkCallback: OnCallbackBle? = null
     private var sdkReady = false
+    private var engineBindingGeneration = 0
     private val scanStartTimesMs = ArrayDeque<Long>()
     private var isScanning = false
     private var activeScanConfig: ScanConfig? = null
@@ -61,6 +63,8 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
     private var androidCommandResendCount = 0
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
+        engineBindingGeneration += 1
+        val bindingGeneration = engineBindingGeneration
         context = binding.applicationContext
         bluetoothAdapter = (context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
         methodChannel = MethodChannel(binding.binaryMessenger, METHOD_CHANNEL)
@@ -71,23 +75,32 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
             eventEmitter.emitNativeLog(level, message, timestampMs)
         }
         registerBluetoothStateReceiver()
-        initVendorSdk()
+        initVendorSdk(bindingGeneration)
         ElinkNativeLogger.i("plugin attached")
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         ElinkNativeLogger.i("plugin detached")
+        engineBindingGeneration += 1
         ElinkNativeLogger.setEventHandler(null)
-        unregisterBluetoothStateReceiver()
-        disposeSdkResources()
         methodChannel.setMethodCallHandler(null)
         eventChannel.setStreamHandler(null)
         eventEmitter.eventSink = null
+        unregisterBluetoothStateReceiver()
+        disposeEngineResources()
     }
 
     override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
         eventEmitter.eventSink = events
         eventEmitter.emitAdapterState(adapterStateName())
+        managedConnections.connectionsSnapshot().forEach { connection ->
+            val state = when (connection.phase) {
+                ElinkAndroidConnectionPhase.CONNECTING -> "connecting"
+                ElinkAndroidConnectionPhase.CONNECTED -> "connected"
+                ElinkAndroidConnectionPhase.DISCONNECTING -> "disconnecting"
+            }
+            eventEmitter.emitConnection(connection.remoteId, state)
+        }
     }
 
     override fun onCancel(arguments: Any?) {
@@ -200,7 +213,7 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
                     result.success(mcuDecrypt(mac, payload))
                 }
                 "dispose" -> {
-                    disposeSdkResources()
+                    disposeDartSessionResources()
                     result.success(null)
                 }
                 else -> result.notImplemented()
@@ -252,12 +265,17 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
         bluetoothStateReceiver = null
     }
 
-    private fun initVendorSdk() {
+    // 初始化 Android SDK，并通过 Engine 代次阻止旧初始化回调重新注册监听器。
+    private fun initVendorSdk(bindingGeneration: Int) {
         try {
             ElinkNativeLogger.d("init vendor sdk")
             AILinkSDK.getInstance().init(context)
             AILinkBleManager.getInstance().init(context, object : AILinkBleManager.onInitListener {
                 override fun onInitSuccess() {
+                    if (bindingGeneration != engineBindingGeneration) {
+                        ElinkNativeLogger.w("ignore stale sdk init success generation=$bindingGeneration")
+                        return
+                    }
                     ElinkNativeLogger.i("sdk init success")
                     sdkReady = true
                     sdkCallback = object : OnCallbackBle {
@@ -295,12 +313,14 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
                         }
                         override fun onConnecting(mac: String?) {
                             mac?.let {
+                                if (!managedConnections.owns(it)) return@let
                                 ElinkNativeLogger.i("connecting remoteId=$it")
                                 eventEmitter.emitConnection(it, "connecting")
                             }
                         }
                         override fun onConnectionSuccess(mac: String?) {
                             mac?.let {
+                                if (!managedConnections.markConnected(it)) return@let
                                 ElinkNativeLogger.i("connected remoteId=$it")
                                 eventEmitter.emitConnection(it, "connected")
                                 attachDeviceListeners(it)
@@ -308,6 +328,7 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
                         }
                         override fun onServicesDiscovered(mac: String?) {
                             mac?.let {
+                                if (!managedConnections.owns(it)) return@let
                                 ElinkNativeLogger.d("services discovered remoteId=$it")
                                 attachDeviceListeners(it)
                                 eventEmitter.emit(
@@ -326,6 +347,7 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
                         }
                         override fun onDisConnected(mac: String?, code: Int) {
                             mac?.let {
+                                if (!managedConnections.remove(it)) return@let
                                 ElinkNativeLogger.i("disconnected remoteId=$it code=$code")
                                 listenerAttachedRemoteIds.remove(it)
                                 eventEmitter.emitConnection(it, "disconnected", "code=$code")
@@ -336,12 +358,14 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
                 }
 
                 override fun onInitFailure() {
+                    if (bindingGeneration != engineBindingGeneration) return
                     ElinkNativeLogger.e("sdk init failure")
                     sdkReady = false
                     eventEmitter.emitError("sdk_init_failure", "AILink Android SDK initialization failed")
                 }
             })
         } catch (ignored: Throwable) {
+            if (bindingGeneration != engineBindingGeneration) return
             ElinkNativeLogger.e("sdk init exception=${ignored.message ?: ignored}", ignored)
             sdkReady = false
             eventEmitter.emitError("sdk_init_failure", ignored.message ?: "AILink Android SDK initialization failed")
@@ -440,11 +464,17 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
         ensureBluetoothPoweredOn()
         ElinkNativeLogger.i("connect remoteId=$remoteId autoConnect=$autoConnect")
         eventEmitter.emitConnection(remoteId, "connecting")
-        val bleValue = scanResults[remoteId]
-        if (bleValue != null && !autoConnect) {
-            AILinkBleManager.getInstance().connectDevice(bleValue)
-        } else {
-            AILinkBleManager.getInstance().connectDevice(remoteId)
+        managedConnections.trackConnecting(remoteId)
+        try {
+            val bleValue = scanResults[remoteId]
+            if (bleValue != null && !autoConnect) {
+                AILinkBleManager.getInstance().connectDevice(bleValue)
+            } else {
+                AILinkBleManager.getInstance().connectDevice(remoteId)
+            }
+        } catch (error: Throwable) {
+            managedConnections.remove(remoteId)
+            throw error
         }
     }
 
@@ -453,6 +483,7 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
             throw IllegalArgumentException("remoteId is empty")
         }
         ElinkNativeLogger.i("disconnect remoteId=$remoteId")
+        managedConnections.markDisconnecting(remoteId)
         eventEmitter.emitConnection(remoteId, "disconnecting")
         AILinkBleManager.getInstance().disconnect(remoteId)
     }
@@ -869,14 +900,53 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
         return ElinkBleCrypto.decryptBroadcast(payload)
     }
 
-    private fun disposeSdkResources() {
-        stopScanInternal()
-        runCatching { AILinkBleManager.getInstance().disconnectAll() }
-        sdkCallback?.let { AILinkBleManager.getInstance().removeOnCallbackBle(it) }
-        sdkCallback = null
-        sdkReady = false
+    // 定向断开单个登记设备；已建连时直接使用 BleDevice，避免触碰 SDK 的全局 pending GATT。
+    private fun disconnectManagedConnection(remoteId: String) {
+        val manager = AILinkBleManager.getInstance()
+        manager.removeAutoConnect(remoteId)
+        val device = manager.getBleDevice(remoteId)
+        if (device != null) {
+            device.disconnect()
+            return
+        }
+        manager.disconnect(remoteId)
+    }
+
+    // Engine detach 时仅遍历当前 Engine 登记的连接，避免调用 SDK 全局 disconnectAll。
+    private fun disconnectManagedConnections() {
+        val remoteIds = managedConnections.remoteIdsSnapshot()
+        managedConnections.clear()
+        remoteIds.forEach { remoteId ->
+            runCatching {
+                disconnectManagedConnection(remoteId)
+            }.onFailure { error ->
+                ElinkNativeLogger.e(
+                    "detach disconnect failed remoteId=$remoteId error=${error.message ?: error}",
+                    error,
+                )
+            }
+        }
+    }
+
+    // 释放插件托管的扫描和连接资源，可由主动 dispose 与 Engine detach 安全重复调用。
+    private fun disposeManagedBleResources() {
+        stopScanInternal(emitStopped = false)
+        disconnectManagedConnections()
         scanResults.clear()
         listenerAttachedRemoteIds.clear()
+    }
+
+    // 主动 dispose 时断开当前 Engine 托管的全部设备，同时保留 Engine 级 SDK 初始化能力。
+    private fun disposeDartSessionResources() {
+        disposeManagedBleResources()
+    }
+
+    // 释放当前 FlutterEngine 持有的 SDK 回调、连接和临时状态。
+    private fun disposeEngineResources() {
+        sdkCallback?.let { AILinkBleManager.getInstance().removeOnCallbackBle(it) }
+        disposeManagedBleResources()
+        sdkCallback = null
+        sdkReady = false
     }
 
     private data class ScanConfig(

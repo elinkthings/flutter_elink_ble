@@ -154,6 +154,7 @@ abstract class FlutterElinkBlePlatform extends PlatformInterface {
     throw UnimplementedError('mcuDecrypt() has not been implemented.');
   }
 
+  /// 释放当前 Dart 会话对应的原生资源，并断开插件托管的全部 BLE 连接。
   Future<void> dispose() {
     throw UnimplementedError('dispose() has not been implemented.');
   }

@@ -18,6 +18,15 @@ final class ElinkIosDeviceSession: NSObject, ELAILinkBleManagerDelegate {
   private var invalidated = false
   private(set) var connectionReady = false
 
+  /// EventChannel 重新监听时用于恢复当前 session 的连接状态。
+  var currentConnectionStateName: String? {
+    guard !invalidated else { return nil }
+    if disconnecting {
+      return "disconnecting"
+    }
+    return connectionReady ? "connected" : "connecting"
+  }
+
   /// 创建指定 remoteId 的 iOS 连接会话。
   init(remoteId: String, callbacks: ElinkIosDeviceSessionCallbacks) {
     self.remoteId = remoteId

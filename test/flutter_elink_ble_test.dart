@@ -42,6 +42,7 @@ class MockElinkBlePlatform
   String? lastInitHandshakeRemoteId;
   String? lastHandshakeEncryptRemoteId;
   String? lastCheckHandshakeRemoteId;
+  int disposeCallCount = 0;
 
   @override
   Stream<Map<dynamic, dynamic>> get events => eventController.stream;
@@ -230,8 +231,11 @@ class MockElinkBlePlatform
     return payload;
   }
 
+  /// 记录业务 dispose 是否调用平台完整资源释放入口。
   @override
-  Future<void> dispose() async {}
+  Future<void> dispose() async {
+    disposeCallCount += 1;
+  }
 }
 
 void main() {
@@ -337,6 +341,16 @@ void main() {
     await ElinkBle.disconnect('remote-1');
 
     expect(fakePlatform.lastDisconnectedRemoteId, 'remote-1');
+  });
+
+  // 验证业务 dispose 将完整清理职责交给平台实现。
+  test('dispose delegates complete cleanup to the platform', () async {
+    final fakePlatform = MockElinkBlePlatform();
+    FlutterElinkBlePlatform.instance = fakePlatform;
+
+    await ElinkBle.dispose();
+
+    expect(fakePlatform.disposeCallCount, 1);
   });
 
   test('readRssi forwards to platform', () async {

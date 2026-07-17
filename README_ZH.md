@@ -33,7 +33,7 @@ flutter pub add flutter_elink_ble
 
 ```yaml
 dependencies:
-  flutter_elink_ble: ^0.3.0
+  flutter_elink_ble: ^0.3.1
 ```
 
 ## Android 配置
@@ -408,9 +408,16 @@ await passthroughSub.cancel();
 await characteristicSub.cancel();
 await rssiSub.cancel();
 await mtuSub.cancel();
-await ElinkBle.disconnect(result.device.remoteId);
 await ElinkBle.dispose();
 ```
+
+`ElinkBle.dispose()` 会释放 Dart subscriptions、停止扫描，并断开插件托管的
+全部 BLE 连接。如果页面销毁后仍需保持连接，只取消该页面自己的 subscriptions，
+不要调用全局 `ElinkBle.dispose()`。Android 和 iOS 都会逐个定向释放设备，不会调用
+进程级原生 `disconnectAll()`。
+
+示例 App 提供显式 `dispose()` 按钮。App 进入后台不会调用 `dispose()`，因此不会
+自动断开设备连接。
 
 ## 蓝牙状态回调
 

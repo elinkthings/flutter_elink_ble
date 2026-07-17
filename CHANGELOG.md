@@ -1,3 +1,15 @@
+## 0.3.1
+
+* Changed Android and iOS Engine detach cleanup to disconnect only connections
+  owned by that Engine instead of using process-wide connection teardown.
+* Changed `ElinkBle.dispose()` to stop scanning and disconnect every connection
+  owned by the plugin through targeted per-device cleanup.
+* Added iOS `detachFromEngine` registration and cleanup for channels, delegates,
+  scans, and per-device sessions.
+* Restored active connection states when Dart re-subscribes to native events.
+* Added an explicit `dispose()` action to the example; backgrounding the app does
+  not trigger connection cleanup.
+
 ## 0.3.0
 
 * Fixed iOS active disconnect sequencing by keeping the session delegate alive

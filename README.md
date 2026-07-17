@@ -42,7 +42,7 @@ Or add it manually to `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  flutter_elink_ble: ^0.3.0
+  flutter_elink_ble: ^0.3.1
 ```
 
 ## Android Setup
@@ -403,9 +403,17 @@ await passthroughSub.cancel();
 await characteristicSub.cancel();
 await rssiSub.cancel();
 await mtuSub.cancel();
-await ElinkBle.disconnect(result.device.remoteId);
 await ElinkBle.dispose();
 ```
+
+`ElinkBle.dispose()` releases Dart subscriptions, stops scanning, and disconnects
+all connections managed by this plugin. To keep BLE connections alive when a
+page is removed, cancel only that page's subscriptions and do not call the global
+`ElinkBle.dispose()` API. Android and iOS use targeted per-device cleanup rather
+than a process-wide native `disconnectAll()` call.
+
+The example app provides an explicit `dispose()` button. Moving the app to the
+background does not invoke `dispose()` and therefore does not disconnect devices.
 
 ## Default Elink UUIDs
 
