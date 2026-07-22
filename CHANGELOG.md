@@ -1,3 +1,13 @@
+## 0.3.2
+
+* Fixed Android device listeners not being reattached when a Bluetooth adapter
+  restart replaces the SDK `BleDevice` instance for the same remote ID.
+* Invalidated Android and iOS scan, connection, handshake, and listener/session
+  state when Bluetooth turns off or CoreBluetooth resets.
+* Added `disconnected` events with reason `bluetooth_off` for every connection
+  invalidated by an adapter shutdown.
+* Cleared Dart scanning state and cached scan results when Bluetooth shuts down.
+
 ## 0.3.1
 
 * Changed Android and iOS Engine detach cleanup to disconnect only connections

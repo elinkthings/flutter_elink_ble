@@ -20,6 +20,10 @@ public class ElinkBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
   var defaultHandshakeSeed: Data?
   var nativeScanRunning = false
   var suppressedScanStoppedCallbacks = 0
+  var activeScanGeneration: UInt64?
+  private(set) var adapterSessionGeneration: UInt64 = 0
+  private(set) var adapterSessionInvalidated = false
+  private(set) var adapterShutdownReachedPoweredOff = false
   private var engineResourcesReleased = false
 
   public static func register(with registrar: FlutterPluginRegistrar) {
@@ -302,9 +306,29 @@ public class ElinkBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
     withServices: [String],
     result: @escaping FlutterResult
   ) {
-    waitForBluetoothReady(attemptsRemaining: 8) { [weak self] state in
+    let requestGeneration = adapterSessionGeneration
+    waitForBluetoothReady(
+      requestGeneration: requestGeneration,
+      attemptsRemaining: 8
+    ) { [weak self] state in
       guard let self else {
         result(FlutterError(code: "plugin_disposed", message: "BLE plugin was disposed", details: nil))
+        return
+      }
+      guard !self.engineResourcesReleased else {
+        result(FlutterError(code: "plugin_disposed", message: "BLE plugin was disposed", details: nil))
+        return
+      }
+      guard self.isAdapterSessionCurrent(requestGeneration) else {
+        let message = "Bluetooth adapter session changed before scan started"
+        ElinkNativeLogger.warning("startScan invalidated generation=\(requestGeneration)")
+        result(
+          FlutterError(
+            code: "bluetooth_not_ready",
+            message: message,
+            details: ["state": self.adapterStateName(self.bleManager.central.state)]
+          )
+        )
         return
       }
       self.emitAdapterState()
@@ -328,13 +352,15 @@ public class ElinkBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
     // Use AILink SDK scan implementation. Dart service filters are UUID-based.
     let serviceUuids = withServices.compactMap { CBUUID(string: $0) }
     lastScanServiceUuids = serviceUuids
+    activeScanGeneration = adapterSessionGeneration
+    nativeScanRunning = true
     ElinkNativeLogger.debug("startScan timeoutMs=\(timeoutMs) services=\(serviceUuids.map { shortUuid($0) })")
     if serviceUuids.isEmpty {
       bleManager.scanAll()
     } else {
       bleManager.scan(withServices: serviceUuids, options: nil)
     }
-    nativeScanRunning = true
+    guard isCurrentScanSession else { return }
     scanTimer = Timer.scheduledTimer(
       withTimeInterval: TimeInterval(timeoutMs) / 1000.0,
       repeats: false
@@ -344,9 +370,14 @@ public class ElinkBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
   }
 
   private func waitForBluetoothReady(
+    requestGeneration: UInt64,
     attemptsRemaining: Int,
     completion: @escaping (CBManagerState) -> Void
   ) {
+    guard isAdapterSessionCurrent(requestGeneration) else {
+      completion(bleManager.central.state)
+      return
+    }
     let state = bleManager.central.state
     if state == .poweredOn || state == .poweredOff || state == .unauthorized || state == .unsupported {
       completion(state)
@@ -361,22 +392,96 @@ public class ElinkBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
         completion(.unknown)
         return
       }
-      self.waitForBluetoothReady(attemptsRemaining: attemptsRemaining - 1, completion: completion)
+      self.waitForBluetoothReady(
+        requestGeneration: requestGeneration,
+        attemptsRemaining: attemptsRemaining - 1,
+        completion: completion
+      )
     }
+  }
+
+  /// 判断异步操作是否仍属于当前有效的蓝牙适配器会话。
+  func isAdapterSessionCurrent(_ generation: UInt64) -> Bool {
+    return !engineResourcesReleased
+      && !adapterSessionInvalidated
+      && generation == adapterSessionGeneration
+  }
+
+  /// 判断 SDK 扫描回调是否仍属于当前有效的扫描请求。
+  var isCurrentScanSession: Bool {
+    guard let activeScanGeneration else { return false }
+    return isAdapterSessionCurrent(activeScanGeneration)
+  }
+
+  /// 清理本地扫描计时器和状态，并返回清理前是否存在活动扫描。
+  @discardableResult
+  private func clearScanState() -> Bool {
+    scanTimer?.invalidate()
+    scanTimer = nil
+    let wasRunning = nativeScanRunning || activeScanGeneration != nil
+    nativeScanRunning = false
+    activeScanGeneration = nil
+    return wasRunning
   }
 
   private func stopScan(emitStopped: Bool = true) {
     ElinkNativeLogger.debug("stopScan emitStopped=\(emitStopped)")
-    scanTimer?.invalidate()
-    scanTimer = nil
-    let wasRunning = nativeScanRunning
-    if !emitStopped && wasRunning {
+    let shouldStopNative = bleManager.central.state == .poweredOn
+    let wasRunning = clearScanState()
+    if !emitStopped && wasRunning && shouldStopNative {
       suppressedScanStoppedCallbacks += 1
     }
-    nativeScanRunning = false
-    bleManager.stopScan()
+    if shouldStopNative {
+      bleManager.stopScan()
+    }
     if emitStopped && wasRunning {
       emit(["type": "scanStopped"])
+    }
+  }
+
+  /// 统一处理 CoreBluetooth 状态；关闭或重置时先失效当前适配器会话，再上报终态事件。
+  func handleAdapterStateChanged(_ state: CBManagerState) {
+    guard state == .poweredOff || state == .resetting else {
+      if state == .poweredOn {
+        adapterSessionInvalidated = false
+        adapterShutdownReachedPoweredOff = false
+      }
+      emit(["type": "adapterState", "state": adapterStateName(state)])
+      return
+    }
+
+    guard !adapterSessionInvalidated else {
+      if state == .poweredOff && !adapterShutdownReachedPoweredOff {
+        adapterShutdownReachedPoweredOff = true
+        emit(["type": "adapterState", "state": adapterStateName(state)])
+      } else if state == .resetting && !adapterShutdownReachedPoweredOff {
+        emit(["type": "adapterState", "state": adapterStateName(state)])
+      }
+      return
+    }
+
+    adapterSessionInvalidated = true
+    adapterShutdownReachedPoweredOff = state == .poweredOff
+    adapterSessionGeneration &+= 1
+    let wasScanning = clearScanState()
+    let invalidatedSessions = deviceSessions
+    deviceSessions.removeAll()
+    scanResults.removeAll()
+    lastScanServiceUuids.removeAll()
+    handshakeSeeds.removeAll()
+    defaultHandshakeSeed = nil
+    suppressedScanStoppedCallbacks = 0
+    invalidatedSessions.values.forEach { $0.clearDelegate() }
+    ElinkNativeLogger.info(
+      "adapter session invalidated state=\(adapterStateName(state)) connections=\(invalidatedSessions.count) scanning=\(wasScanning)"
+    )
+
+    emit(["type": "adapterState", "state": adapterStateName(state)])
+    if wasScanning {
+      emit(["type": "scanStopped"])
+    }
+    invalidatedSessions.keys.forEach { remoteId in
+      emitConnection(remoteId: remoteId, state: "disconnected", reason: Self.bluetoothOffReason)
     }
   }
 
@@ -479,6 +584,7 @@ public class ElinkBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
 
   /// 释放插件托管的扫描和连接资源，可由主动 dispose 与 Engine detach 安全重复调用。
   private func disposeManagedBleResources() {
+    adapterSessionGeneration &+= 1
     stopScan(emitStopped: false)
     deviceSessions.values.forEach { $0.dispose() }
     scanResults.removeAll()
@@ -509,6 +615,8 @@ public class ElinkBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
     methodChannel = nil
     eventChannel = nil
   }
+
+  private static let bluetoothOffReason = "bluetooth_off"
 
   func adapterStateName(_ state: CBManagerState) -> String {
     switch state {
@@ -603,6 +711,9 @@ public class ElinkBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
       },
       emitPassthroughData: { [weak self] data, remoteId in
         self?.emitPassthroughData(data, remoteId: remoteId)
+      },
+      invalidateAdapterSession: { [weak self] state in
+        self?.handleAdapterStateChanged(state)
       },
       removeSession: { [weak self] remoteId, sessionId in
         self?.removeDeviceSession(remoteId: remoteId, sessionId: sessionId)

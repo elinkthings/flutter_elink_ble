@@ -45,4 +45,38 @@ internal class ElinkBlePluginTest {
         assertFalse(registry.owns("device-a"))
         assertFalse(registry.markDisconnecting("device-b"))
     }
+
+    // 验证监听绑定按对象身份判断，remoteId 大小写变化不会导致同一实例重复挂载。
+    @Test
+    fun listenerBindingRegistryTracksCurrentInstanceIdentity() {
+        val registry = ElinkAndroidListenerBindingRegistry<Any>()
+        val firstDevice = Any()
+        val secondDevice = Any()
+
+        assertTrue(registry.bindIfChanged("aa:bb:cc:dd:ee:ff", firstDevice))
+        assertFalse(registry.bindIfChanged("AA:BB:CC:DD:EE:FF", firstDevice))
+        assertTrue(registry.isCurrent("AA:BB:CC:DD:EE:FF", firstDevice))
+
+        assertTrue(registry.bindIfChanged("AA:BB:CC:DD:EE:FF", secondDevice))
+        assertFalse(registry.isCurrent("aa:bb:cc:dd:ee:ff", firstDevice))
+        assertTrue(registry.isCurrent("aa:bb:cc:dd:ee:ff", secondDevice))
+    }
+
+    // 验证旧实例失败回滚不会误删新绑定，适配器清理后同一实例可以重新挂载。
+    @Test
+    fun listenerBindingRegistryRollbackAndClearAreInstanceSafe() {
+        val registry = ElinkAndroidListenerBindingRegistry<Any>()
+        val firstDevice = Any()
+        val secondDevice = Any()
+
+        registry.bindIfChanged("device-a", firstDevice)
+        registry.bindIfChanged("device-a", secondDevice)
+        registry.removeIfCurrent("device-a", firstDevice)
+        assertFalse(registry.bindIfChanged("device-a", secondDevice))
+
+        registry.removeIfCurrent("device-a", secondDevice)
+        assertTrue(registry.bindIfChanged("device-a", secondDevice))
+        registry.clear()
+        assertTrue(registry.bindIfChanged("device-a", secondDevice))
+    }
 }

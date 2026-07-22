@@ -1310,6 +1310,65 @@ void main() {
     expect(states, [ElinkAdapterState.on]);
   });
 
+  test(
+    'adapter shutdown clears scanning state and cached results once',
+    () async {
+      final fakePlatform = MockElinkBlePlatform();
+      FlutterElinkBlePlatform.instance = fakePlatform;
+      final scanningStates = <bool>[];
+      final scanResultSizes = <int>[];
+      final scanningSubscription = ElinkBle.isScanning.listen(
+        scanningStates.add,
+      );
+      final scanSubscription = ElinkBle.scanResults.listen(
+        (results) => scanResultSizes.add(results.length),
+      );
+
+      await ElinkBle.startScan(timeout: const Duration(seconds: 3));
+      fakePlatform.eventController.add({
+        'type': 'scanResult',
+        'remoteId': 'remote-1',
+        'platformName': 'Elink',
+        'rssi': -45,
+        'advertisementData': {
+          'advName': 'Elink',
+          'serviceUuids': ['FFE0'],
+          'manufacturerData': Uint8List(0),
+        },
+      });
+      await Future<void>.delayed(Duration.zero);
+
+      fakePlatform.eventController
+        ..add({'type': 'adapterState', 'state': 'turningOff'})
+        ..add({'type': 'adapterState', 'state': 'off'});
+      await Future<void>.delayed(Duration.zero);
+      await scanningSubscription.cancel();
+      await scanSubscription.cancel();
+
+      expect(ElinkBle.isScanningNow, isFalse);
+      expect(scanningStates, [true, false]);
+      expect(scanResultSizes, [0, 1, 0]);
+    },
+  );
+
+  test('connection stream preserves bluetooth off reason', () async {
+    final fakePlatform = MockElinkBlePlatform();
+    FlutterElinkBlePlatform.instance = fakePlatform;
+    final nextEvent = ElinkBle.connectionEvents.first;
+
+    fakePlatform.eventController.add({
+      'type': 'connectionState',
+      'remoteId': 'remote-1',
+      'state': 'disconnected',
+      'reason': 'bluetooth_off',
+    });
+
+    final event = await nextEvent;
+    expect(event.remoteId, 'remote-1');
+    expect(event.connectionState, ElinkConnectionState.disconnected);
+    expect(event.reason, 'bluetooth_off');
+  });
+
   test('connection stream ignores duplicate consecutive states', () async {
     final fakePlatform = MockElinkBlePlatform();
     FlutterElinkBlePlatform.instance = fakePlatform;

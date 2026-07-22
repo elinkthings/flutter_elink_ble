@@ -1,7 +1,5 @@
 package com.elinkthings.flutter_elink_ble
 
-import java.util.Locale
-
 /** 当前 FlutterEngine 管理的 Android BLE 连接阶段。 */
 internal enum class ElinkAndroidConnectionPhase {
     CONNECTING,
@@ -21,7 +19,7 @@ internal class ElinkAndroidConnectionRegistry {
 
     /** 在调用 SDK connect 前登记连接，覆盖连接中的 Engine detach 竞态。 */
     fun trackConnecting(remoteId: String) {
-        connections[key(remoteId)] = ElinkAndroidManagedConnection(
+        connections[elinkAndroidRemoteIdKey(remoteId)] = ElinkAndroidManagedConnection(
             remoteId = remoteId,
             phase = ElinkAndroidConnectionPhase.CONNECTING,
         )
@@ -29,26 +27,26 @@ internal class ElinkAndroidConnectionRegistry {
 
     /** 仅更新当前 Engine 已登记连接的成功状态，并返回该连接是否属于当前 Engine。 */
     fun markConnected(remoteId: String): Boolean {
-        val connection = connections[key(remoteId)] ?: return false
+        val connection = connections[elinkAndroidRemoteIdKey(remoteId)] ?: return false
         connection.phase = ElinkAndroidConnectionPhase.CONNECTED
         return true
     }
 
     /** 标记当前 Engine 已登记的连接正在断开，并返回是否找到该连接。 */
     fun markDisconnecting(remoteId: String): Boolean {
-        val connection = connections[key(remoteId)] ?: return false
+        val connection = connections[elinkAndroidRemoteIdKey(remoteId)] ?: return false
         connection.phase = ElinkAndroidConnectionPhase.DISCONNECTING
         return true
     }
 
     /** 判断指定设备连接是否由当前 Engine 发起管理。 */
     fun owns(remoteId: String): Boolean {
-        return connections.containsKey(key(remoteId))
+        return connections.containsKey(elinkAndroidRemoteIdKey(remoteId))
     }
 
     /** 在连接进入断开终态或同步连接失败时移除记录。 */
     fun remove(remoteId: String): Boolean {
-        return connections.remove(key(remoteId)) != null
+        return connections.remove(elinkAndroidRemoteIdKey(remoteId)) != null
     }
 
     /** 返回稳定快照，供 Engine detach 定向释放而不受回调修改影响。 */
@@ -64,10 +62,5 @@ internal class ElinkAndroidConnectionRegistry {
     /** 清空当前 Engine 的全部连接所有权记录。 */
     fun clear() {
         connections.clear()
-    }
-
-    /** 统一 remoteId 比较格式，同时保留登记时的原始值用于 SDK 调用。 */
-    private fun key(remoteId: String): String {
-        return remoteId.uppercase(Locale.US)
     }
 }

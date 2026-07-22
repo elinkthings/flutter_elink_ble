@@ -12,6 +12,8 @@ struct ElinkIosDeviceSessionCallbacks {
   let emitRssi: (String, Int) -> Void
   let emitProtocolData: (Data, String, String) -> Void
   let emitPassthroughData: (Data, String) -> Void
+  /// 将设备 manager 观察到的关闭或重置状态交给插件统一失效全部 adapter session。
+  let invalidateAdapterSession: (CBManagerState) -> Void
   let removeSession: (String, String) -> Void
   let remoteId: (CBPeripheral) -> String
   let shortUuid: (CBUUID) -> String

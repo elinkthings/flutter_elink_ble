@@ -86,6 +86,12 @@ final class ElinkIosDeviceSession: NSObject, ELAILinkBleManagerDelegate {
     connectionReady = false
     pendingConnectRemoteId = nil
     clearConnectTimer()
+    if invalidateAdapterSessionIfShuttingDown() { return }
+    let adapterState = manager.central.state
+    guard adapterState == .poweredOn else {
+      finishDisconnect(error: nil)
+      return
+    }
     manager.stopScan()
     guard let peripheral = currentPeripheral, peripheral.state != .disconnected else {
       ElinkNativeLogger.info("session already disconnected remoteId=\(remoteId) sessionId=\(sessionId)")
@@ -148,9 +154,11 @@ final class ElinkIosDeviceSession: NSObject, ELAILinkBleManagerDelegate {
     disconnecting = false
     pendingConnectRemoteId = nil
     clearConnectTimer()
-    manager.stopScan()
-    if disconnectPeripheral {
-      manager.disconnectPeripheral()
+    if manager.central.state == .poweredOn {
+      manager.stopScan()
+      if disconnectPeripheral {
+        manager.disconnectPeripheral()
+      }
     }
     manager.ailinkDelegate = nil
   }
@@ -158,22 +166,22 @@ final class ElinkIosDeviceSession: NSObject, ELAILinkBleManagerDelegate {
   /// 等待当前 session 的蓝牙 manager 可用后优先快速连接，未命中再启动目标扫描。
   private func startConnectWhenBluetoothReady(attemptsRemaining: Int) {
     guard !invalidated else { return }
+    if invalidateAdapterSessionIfShuttingDown() { return }
     switch manager.central.state {
     case .poweredOn:
       ElinkNativeLogger.debug("session bluetooth poweredOn remoteId=\(remoteId) sessionId=\(sessionId)")
       if !connectRetrievedPeripheralIfAvailable() {
         startConnectScan()
       }
-    case .poweredOff:
-      ElinkNativeLogger.warning("session bluetooth poweredOff remoteId=\(remoteId) sessionId=\(sessionId)")
-      finishConnectFailure("Bluetooth is powered off")
+    case .poweredOff, .resetting:
+      return
     case .unauthorized:
       ElinkNativeLogger.warning("session bluetooth unauthorized remoteId=\(remoteId) sessionId=\(sessionId)")
       finishConnectFailure("Bluetooth permission is not authorized")
     case .unsupported:
       ElinkNativeLogger.warning("session bluetooth unsupported remoteId=\(remoteId) sessionId=\(sessionId)")
       finishConnectFailure("Bluetooth LE is not supported on this device")
-    case .resetting, .unknown:
+    case .unknown:
       guard attemptsRemaining > 0 else {
         finishConnectFailure("Bluetooth adapter is not ready")
         return
@@ -264,13 +272,16 @@ final class ElinkIosDeviceSession: NSObject, ELAILinkBleManagerDelegate {
   /// 结束当前连接流程并上报失败原因。
   private func finishConnectFailure(_ message: String) {
     guard !invalidated else { return }
+    if invalidateAdapterSessionIfShuttingDown() { return }
     ElinkNativeLogger.warning("session connect failure remoteId=\(remoteId) sessionId=\(sessionId) message=\(message)")
     pendingConnectRemoteId = nil
     connectionReady = false
     disconnecting = false
     clearConnectTimer()
-    manager.stopScan()
-    manager.disconnectPeripheral()
+    if manager.central.state == .poweredOn {
+      manager.stopScan()
+      manager.disconnectPeripheral()
+    }
     callbacks.emitConnection(remoteId, "disconnected", message)
     callbacks.removeSession(remoteId, sessionId)
     completeDisconnectResults()
@@ -292,6 +303,7 @@ final class ElinkIosDeviceSession: NSObject, ELAILinkBleManagerDelegate {
   /// 处理真实断开完成后的统一清理，确保 session 和 delegate 在回调后才释放。
   private func finishDisconnect(error: Error?) {
     guard !invalidated else { return }
+    if invalidateAdapterSessionIfShuttingDown() { return }
     pendingConnectRemoteId = nil
     connectionReady = false
     disconnecting = false
@@ -307,9 +319,26 @@ final class ElinkIosDeviceSession: NSObject, ELAILinkBleManagerDelegate {
     return callbacks.remoteId(peripheral.peripheral) == targetRemoteId
   }
 
+  /// 在连接终态回调前识别关闭或重置状态，并交给插件统一失效全部 session。
+  private func invalidateAdapterSessionIfShuttingDown() -> Bool {
+    let state = manager.central.state
+    guard state == .poweredOff || state == .resetting else { return false }
+    ElinkNativeLogger.warning(
+      "session adapter invalidated remoteId=\(remoteId) sessionId=\(sessionId) state=\(state.rawValue)"
+    )
+    callbacks.invalidateAdapterSession(state)
+    return true
+  }
+
+  /// 判断当前 SDK 回调是否应被丢弃，并在适配器关闭阶段优先触发统一失效。
+  private func shouldIgnoreSdkCallback() -> Bool {
+    if invalidated { return true }
+    return invalidateAdapterSessionIfShuttingDown()
+  }
+
   /// 处理当前 session manager 的蓝牙状态变化。
   func managerDidUpdateState(_ central: CBCentralManager) {
-    guard !invalidated else { return }
+    guard !shouldIgnoreSdkCallback() else { return }
     guard pendingConnectRemoteId != nil, central.state == .poweredOn else {
       return
     }
@@ -319,19 +348,19 @@ final class ElinkIosDeviceSession: NSObject, ELAILinkBleManagerDelegate {
 
   /// 处理当前 session manager 扫描到的单个外设。
   func managerDidDiscover(_ peripheral: ELAILinkPeripheral) {
-    guard !invalidated else { return }
+    guard !shouldIgnoreSdkCallback() else { return }
     connectDiscoveredPeripheral(peripheral)
   }
 
   /// 处理当前 session manager 批量扫描到的外设。
   func managerDidDiscoverMorePeripheral(_ peripherals: [NSUUID: ELAILinkPeripheral]) {
-    guard !invalidated else { return }
+    guard !shouldIgnoreSdkCallback() else { return }
     peripherals.values.forEach { connectDiscoveredPeripheral($0) }
   }
 
   /// 处理 AILink SDK 连接成功回调。
   func managerDidConnect(_ peripheral: CBPeripheral) {
-    guard !invalidated else { return }
+    guard !shouldIgnoreSdkCallback() else { return }
     ElinkNativeLogger.info("managerDidConnect remoteId=\(remoteId) sessionId=\(sessionId)")
     connectionReady = false
     callbacks.emitConnection(remoteId, "connecting", nil)
@@ -339,7 +368,7 @@ final class ElinkIosDeviceSession: NSObject, ELAILinkBleManagerDelegate {
 
   /// 处理 AILink SDK 连接失败回调。
   func managerDidFail(toConnect peripheral: CBPeripheral, error: Error) {
-    guard !invalidated else { return }
+    guard !shouldIgnoreSdkCallback() else { return }
     ElinkNativeLogger.error(
       "managerDidFail remoteId=\(remoteId) sessionId=\(sessionId) error=\(error.localizedDescription)"
     )
@@ -354,6 +383,7 @@ final class ElinkIosDeviceSession: NSObject, ELAILinkBleManagerDelegate {
 
   /// 处理 AILink SDK 真实断开回调。
   func managerDidDisconnect(_ peripheral: CBPeripheral, error: Error?) {
+    guard !shouldIgnoreSdkCallback() else { return }
     ElinkNativeLogger.info(
       "managerDidDisconnect remoteId=\(remoteId) sessionId=\(sessionId) error=\(error?.localizedDescription ?? "")"
     )
@@ -361,7 +391,7 @@ final class ElinkIosDeviceSession: NSObject, ELAILinkBleManagerDelegate {
   }
 
   func managerDidUpdateConnect(_ state: NELBleManagerConnectState) {
-    guard !invalidated else { return }
+    guard !shouldIgnoreSdkCallback() else { return }
     ElinkNativeLogger.debug(
       "managerDidUpdateConnect remoteId=\(remoteId) sessionId=\(sessionId) state=0x\(String(format: "%02X", state.rawValue))"
     )
@@ -419,7 +449,7 @@ final class ElinkIosDeviceSession: NSObject, ELAILinkBleManagerDelegate {
   }
 
   func managerDidDisconnectError(_ error: Error?) {
-    guard !invalidated else { return }
+    guard !shouldIgnoreSdkCallback() else { return }
     if let error {
       ElinkNativeLogger.error(
         "managerDidDisconnectError remoteId=\(remoteId) sessionId=\(sessionId) error=\(error.localizedDescription)"
@@ -429,7 +459,7 @@ final class ElinkIosDeviceSession: NSObject, ELAILinkBleManagerDelegate {
   }
 
   func peripheralDidDiscover(_ services: [CBService]) {
-    guard !invalidated else { return }
+    guard !shouldIgnoreSdkCallback() else { return }
     let serviceUuids = services.map { callbacks.shortUuid($0.uuid) }
     ElinkNativeLogger.debug("peripheralDidDiscover remoteId=\(remoteId) services=\(serviceUuids)")
     callbacks.emitEvent([
@@ -441,7 +471,7 @@ final class ElinkIosDeviceSession: NSObject, ELAILinkBleManagerDelegate {
   }
 
   func peripheralDidDiscoverCharacteristics(forService characteristics: [CBCharacteristic]) {
-    guard !invalidated else { return }
+    guard !shouldIgnoreSdkCallback() else { return }
     let characteristicUuids = characteristics.map {
       callbacks.shortUuid($0.uuid)
     }
@@ -459,7 +489,7 @@ final class ElinkIosDeviceSession: NSObject, ELAILinkBleManagerDelegate {
   }
 
   func peripheralDidUpdateNotificationState(forCharacteristic characteristic: CBCharacteristic) {
-    guard !invalidated else { return }
+    guard !shouldIgnoreSdkCallback() else { return }
     ElinkNativeLogger.debug(
       "notificationStateChanged remoteId=\(remoteId) uuid=\(callbacks.shortUuid(characteristic.uuid))"
     )
@@ -467,33 +497,33 @@ final class ElinkIosDeviceSession: NSObject, ELAILinkBleManagerDelegate {
   }
 
   func peripheralDidUpdateValue(forCharacteristic characteristic: CBCharacteristic) {
-    guard !invalidated else { return }
+    guard !shouldIgnoreSdkCallback() else { return }
     ElinkNativeLogger.debug("characteristicChanged remoteId=\(remoteId) uuid=\(callbacks.shortUuid(characteristic.uuid))")
     callbacks.emitCharacteristicEvent(remoteId, "changed", characteristic)
   }
 
   func didWriteValue(forCharacteristic characteristic: CBCharacteristic) {
-    guard !invalidated else { return }
+    guard !shouldIgnoreSdkCallback() else { return }
     ElinkNativeLogger.debug("didWriteValue remoteId=\(remoteId) uuid=\(callbacks.shortUuid(characteristic.uuid))")
     callbacks.emitCharacteristicEvent(remoteId, "write", characteristic)
   }
 
   func peripheralDidReadRSSI(_ RSSI: NSNumber) {
-    guard !invalidated else { return }
+    guard !shouldIgnoreSdkCallback() else { return }
     ElinkNativeLogger.debug("peripheralDidReadRSSI remoteId=\(remoteId) rssi=\(RSSI.intValue)")
     callbacks.emitRssi(remoteId, RSSI.intValue)
   }
 
   // 只实现带 peripheral 的协议数据入口，避免 SDK 同时回调多个 optional selector。
   func aiLinkBleReceiveA7Data(_ packet: Data, aILinkPeripheral: ELAILinkPeripheral) {
-    guard !invalidated else { return }
+    guard !shouldIgnoreSdkCallback() else { return }
     let packetRemoteId = callbacks.remoteId(aILinkPeripheral.peripheral)
     ElinkNativeLogger.debug("aiLinkBleReceiveA7Data remoteId=\(packetRemoteId) bytes=\(packet.count)")
     callbacks.emitProtocolData(packet, "a7", packetRemoteId)
   }
 
   func aiLinkBleReceiveA6Data(_ packet: Data, aILinkPeripheral: ELAILinkPeripheral) {
-    guard !invalidated else { return }
+    guard !shouldIgnoreSdkCallback() else { return }
     let packetRemoteId = callbacks.remoteId(aILinkPeripheral.peripheral)
     let payload = callbacks.normalizeA6ProtocolData(packet)
     ElinkNativeLogger.debug("aiLinkBleReceiveA6Data remoteId=\(packetRemoteId) bytes=\(payload.count)")
@@ -502,7 +532,7 @@ final class ElinkIosDeviceSession: NSObject, ELAILinkBleManagerDelegate {
   }
 
   func aiLinkBleReceiveRawData(_ rawData: Data, aILinkPeripheral: ELAILinkPeripheral) {
-    guard !invalidated else { return }
+    guard !shouldIgnoreSdkCallback() else { return }
     let packetRemoteId = callbacks.remoteId(aILinkPeripheral.peripheral)
     ElinkNativeLogger.debug("aiLinkBleReceiveRawData remoteId=\(packetRemoteId) bytes=\(rawData.count)")
     callbacks.emitPassthroughData(rawData, packetRemoteId)

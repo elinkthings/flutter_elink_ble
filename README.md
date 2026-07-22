@@ -42,7 +42,7 @@ Or add it manually to `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  flutter_elink_ble: ^0.3.1
+  flutter_elink_ble: ^0.3.2
 ```
 
 ## Android Setup

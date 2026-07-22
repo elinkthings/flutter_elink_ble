@@ -652,7 +652,7 @@ class ElinkBle {
   static void _handleEvent(Map<dynamic, dynamic> event) {
     switch (event['type']) {
       case 'adapterState':
-        _setAdapterState(ElinkAdapterState.fromName(event['state']));
+        _handleAdapterState(ElinkAdapterState.fromName(event['state']));
         break;
       case 'scanResult':
         final result = ElinkScanResult.fromMap(event);
@@ -716,6 +716,22 @@ class ElinkBle {
           ),
         );
     }
+  }
+
+  /// 蓝牙关闭阶段同步清理 Dart 扫描状态，避免继续暴露上一个适配器会话的结果。
+  /// Clear Dart scan state when Bluetooth shuts down so stale results are not exposed.
+  static void _handleAdapterState(ElinkAdapterState state) {
+    _setAdapterState(state);
+    if (state != ElinkAdapterState.turningOff &&
+        state != ElinkAdapterState.off) {
+      return;
+    }
+    _setScanning(false);
+    if (_scanResults.isEmpty) {
+      return;
+    }
+    _scanResults.clear();
+    _scanResultsController.add(const <ElinkScanResult>[]);
   }
 
   /// 发送连接状态事件，并过滤同一设备连续重复的状态。

@@ -50,7 +50,7 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
     private val eventEmitter = ElinkAndroidEventEmitter(handler)
     private var bluetoothAdapter: BluetoothAdapter? = null
     private val scanResults = mutableMapOf<String, BleValueBean>()
-    private val listenerAttachedRemoteIds = mutableSetOf<String>()
+    private val deviceListenerBindings = ElinkAndroidListenerBindingRegistry<BleDevice>()
     private val managedConnections = ElinkAndroidConnectionRegistry()
     private var bluetoothStateReceiver: BroadcastReceiver? = null
     private var sdkCallback: OnCallbackBle? = null
@@ -246,7 +246,7 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
             override fun onReceive(context: Context?, intent: Intent?) {
                 if (intent?.action != BluetoothAdapter.ACTION_STATE_CHANGED) return
                 val state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)
-                eventEmitter.emitAdapterState(adapterStateName(state))
+                handleAdapterStateChanged(state)
             }
         }
         bluetoothStateReceiver = receiver
@@ -265,6 +265,35 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
         bluetoothStateReceiver = null
     }
 
+    // 统一处理蓝牙适配器状态；关闭阶段先失效本地会话，再按固定顺序上报终态事件。
+    private fun handleAdapterStateChanged(state: Int) {
+        val shouldInvalidate = state == BluetoothAdapter.STATE_TURNING_OFF ||
+            state == BluetoothAdapter.STATE_OFF
+        if (!shouldInvalidate) {
+            eventEmitter.emitAdapterState(adapterStateName(state))
+            return
+        }
+
+        val wasScanning = isScanning || activeScanConfig != null
+        val disconnectedRemoteIds = managedConnections.remoteIdsSnapshot()
+        managedConnections.clear()
+        deviceListenerBindings.clear()
+        scanResults.clear()
+        markScanStopped()
+        ElinkNativeLogger.i(
+            "adapter session invalidated state=${adapterStateName(state)} " +
+                "connections=${disconnectedRemoteIds.size} scanning=$wasScanning"
+        )
+
+        eventEmitter.emitAdapterState(adapterStateName(state))
+        if (wasScanning) {
+            eventEmitter.emit(mapOf("type" to "scanStopped"))
+        }
+        disconnectedRemoteIds.forEach { remoteId ->
+            eventEmitter.emitConnection(remoteId, "disconnected", BLUETOOTH_OFF_REASON)
+        }
+    }
+
     // 初始化 Android SDK，并通过 Engine 代次阻止旧初始化回调重新注册监听器。
     private fun initVendorSdk(bindingGeneration: Int) {
         try {
@@ -281,29 +310,39 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
                     sdkCallback = object : OnCallbackBle {
                         override fun bleOpen() {
                             ElinkNativeLogger.i("adapter opened")
-                            eventEmitter.emitAdapterState(adapterStateName())
+                            handleAdapterStateChanged(BluetoothAdapter.STATE_ON)
                         }
                         override fun bleClose() {
                             ElinkNativeLogger.i("adapter closed")
-                            eventEmitter.emitAdapterState(adapterStateName())
+                            handleAdapterStateChanged(BluetoothAdapter.STATE_OFF)
                         }
                         override fun onStartScan() {
+                            if (activeScanConfig == null) {
+                                ElinkNativeLogger.d("ignore stale scan started callback")
+                                return
+                            }
                             ElinkNativeLogger.i("scan started")
                             isScanning = true
                         }
                         override fun onScanTimeOut() {
+                            if (!markScanStopped()) {
+                                ElinkNativeLogger.d("ignore stale scan timeout callback")
+                                return
+                            }
                             ElinkNativeLogger.w("scan timeout")
-                            markScanStopped()
                             eventEmitter.emit(mapOf("type" to "scanStopped"))
                         }
                         override fun onScanErr(type: Int, time: Long) {
+                            if (!markScanStopped()) {
+                                ElinkNativeLogger.d("ignore stale scan error callback type=$type")
+                                return
+                            }
                             ElinkNativeLogger.w("scan error type=$type time=$time")
-                            markScanStopped()
                             emitScanError(type, time)
                             eventEmitter.emit(mapOf("type" to "scanStopped"))
                         }
                         override fun onScanning(data: BleValueBean?) {
-                            if (data != null) {
+                            if (data != null && isScanning && activeScanConfig != null) {
                                 ElinkNativeLogger.d(
                                     "scan result remoteId=${data.address} name=${data.name ?: ""} rssi=${data.rssi}"
                                 )
@@ -349,7 +388,7 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
                             mac?.let {
                                 if (!managedConnections.remove(it)) return@let
                                 ElinkNativeLogger.i("disconnected remoteId=$it code=$code")
-                                listenerAttachedRemoteIds.remove(it)
+                                deviceListenerBindings.remove(it)
                                 eventEmitter.emitConnection(it, "disconnected", "code=$code")
                             }
                         }
@@ -606,104 +645,156 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
         }
     }
 
+    // 为当前 SDK BleDevice 实例挂载监听，同一 remoteId 切换实例时必须重新挂载。
     private fun attachDeviceListeners(remoteId: String) {
         val device = AILinkBleManager.getInstance().getBleDevice(remoteId) ?: return
-        applyCommandResendConfig(device)
-        if (listenerAttachedRemoteIds.contains(remoteId)) return
-        listenerAttachedRemoteIds.add(remoteId)
-        ElinkNativeLogger.d("attach device listeners remoteId=$remoteId")
-        // SDK 会先回调带 uuid 的 default method，再回调不带 uuid 的 method。
-        // Use only UUID callbacks to avoid forwarding the same packet twice.
-        device.setOnBleDeviceDataListener(object : OnBleDeviceDataListener {
-            override fun onNotifyData(uuid: String, data: ByteArray, type: Int) {
-                ElinkNativeLogger.d(
-                    "receiveA7 remoteId=$remoteId uuid=${ElinkAndroidUuid.shortUuidString(uuid)} type=$type data=${ElinkNativeLogger.hex(data)}"
-                )
-                eventEmitter.emitProtocolData(remoteId, "a7", data, uuid, type)
-            }
+        if (!deviceListenerBindings.bindIfChanged(remoteId, device)) return
+        ElinkNativeLogger.d(
+            "attach device listeners remoteId=$remoteId instance=${System.identityHashCode(device)}"
+        )
+        try {
+            applyCommandResendConfig(device)
+            // SDK 会先回调带 uuid 的 default method，再回调不带 uuid 的 method。
+            // Use only UUID callbacks to avoid forwarding the same packet twice.
+            device.setOnBleDeviceDataListener(object : OnBleDeviceDataListener {
+                override fun onNotifyData(uuid: String, data: ByteArray, type: Int) {
+                    withCurrentDeviceListener(remoteId, device) {
+                        ElinkNativeLogger.d(
+                            "receiveA7 remoteId=$remoteId uuid=${ElinkAndroidUuid.shortUuidString(uuid)} type=$type data=${ElinkNativeLogger.hex(data)}"
+                        )
+                        eventEmitter.emitProtocolData(remoteId, "a7", data, uuid, type)
+                    }
+                }
 
-            override fun onNotifyDataA6(uuid: String, data: ByteArray) {
-                ElinkNativeLogger.d(
-                    "receiveA6 remoteId=$remoteId uuid=${ElinkAndroidUuid.shortUuidString(uuid)} data=${ElinkNativeLogger.hex(data)}"
-                )
-                eventEmitter.emitProtocolData(remoteId, "a6", data, uuid, null)
-            }
-        })
-        // 使用 Android SDK 自身的握手结果，避免 Flutter 层重复回复 A6 握手指令。
-        device.setOnBleHandshakeListener(object : OnBleHandshakeListener {
-            override fun onHandshake(status: Boolean) {
-                ElinkNativeLogger.i("handshake remoteId=$remoteId success=$status")
-                eventEmitter.emitHandshake(remoteId, status)
-            }
-        })
-        // 使用 SDK 的 BM 版本解析回调，0x46 分片拼接由底层统一处理。
-        device.setOnBleVersionListener(object : OnBleVersionListener {
-            override fun onBmVersion(version: String) {
-                ElinkNativeLogger.i("bmVersion remoteId=$remoteId command=0x0E version=$version")
-                eventEmitter.emitBmVersion(remoteId, version, 0x0E)
-            }
+                override fun onNotifyDataA6(uuid: String, data: ByteArray) {
+                    withCurrentDeviceListener(remoteId, device) {
+                        ElinkNativeLogger.d(
+                            "receiveA6 remoteId=$remoteId uuid=${ElinkAndroidUuid.shortUuidString(uuid)} data=${ElinkNativeLogger.hex(data)}"
+                        )
+                        eventEmitter.emitProtocolData(remoteId, "a6", data, uuid, null)
+                    }
+                }
+            })
+            // 使用 Android SDK 自身的握手结果，避免 Flutter 层重复回复 A6 握手指令。
+            device.setOnBleHandshakeListener(object : OnBleHandshakeListener {
+                override fun onHandshake(status: Boolean) {
+                    withCurrentDeviceListener(remoteId, device) {
+                        ElinkNativeLogger.i("handshake remoteId=$remoteId success=$status")
+                        eventEmitter.emitHandshake(remoteId, status)
+                    }
+                }
+            })
+            // 使用 SDK 的 BM 版本解析回调，0x46 分片拼接由底层统一处理。
+            device.setOnBleVersionListener(object : OnBleVersionListener {
+                override fun onBmVersion(version: String) {
+                    withCurrentDeviceListener(remoteId, device) {
+                        ElinkNativeLogger.i("bmVersion remoteId=$remoteId command=0x0E version=$version")
+                        eventEmitter.emitBmVersion(remoteId, version, 0x0E)
+                    }
+                }
 
-            override fun onBmVersion46(version: String) {
-                ElinkNativeLogger.i("bmVersion remoteId=$remoteId command=0x46 version=$version")
-                eventEmitter.emitBmVersion(remoteId, version, 0x46)
-            }
-        })
-        // 同上，只接收带 uuid 的透传入口。
-        // Same rule for passthrough data: consume the UUID overload only.
-        device.setOnBleOtherDataListener(object : OnBleOtherDataListener {
-            override fun onNotifyOtherData(uuid: String, data: ByteArray) {
-                ElinkNativeLogger.d(
-                    "receiveRaw remoteId=$remoteId uuid=${ElinkAndroidUuid.shortUuidString(uuid)} data=${ElinkNativeLogger.hex(data)}"
-                )
-                eventEmitter.emitPassthroughData(remoteId, data, uuid)
-            }
-        })
-        device.setOnCharacteristicListener(object : OnCharacteristicListener {
-            override fun onCharacteristicReadOK(characteristic: BluetoothGattCharacteristic) {
-                ElinkNativeLogger.d(
-                    "characteristic read remoteId=$remoteId uuid=${ElinkAndroidUuid.shortUuid(characteristic.uuid)}"
-                )
-                eventEmitter.emitCharacteristicEvent(remoteId, "read", characteristic)
-            }
+                override fun onBmVersion46(version: String) {
+                    withCurrentDeviceListener(remoteId, device) {
+                        ElinkNativeLogger.i("bmVersion remoteId=$remoteId command=0x46 version=$version")
+                        eventEmitter.emitBmVersion(remoteId, version, 0x46)
+                    }
+                }
+            })
+            // 同上，只接收带 uuid 的透传入口。
+            // Same rule for passthrough data: consume the UUID overload only.
+            device.setOnBleOtherDataListener(object : OnBleOtherDataListener {
+                override fun onNotifyOtherData(uuid: String, data: ByteArray) {
+                    withCurrentDeviceListener(remoteId, device) {
+                        ElinkNativeLogger.d(
+                            "receiveRaw remoteId=$remoteId uuid=${ElinkAndroidUuid.shortUuidString(uuid)} data=${ElinkNativeLogger.hex(data)}"
+                        )
+                        eventEmitter.emitPassthroughData(remoteId, data, uuid)
+                    }
+                }
+            })
+            device.setOnCharacteristicListener(object : OnCharacteristicListener {
+                override fun onCharacteristicReadOK(characteristic: BluetoothGattCharacteristic) {
+                    withCurrentDeviceListener(remoteId, device) {
+                        ElinkNativeLogger.d(
+                            "characteristic read remoteId=$remoteId uuid=${ElinkAndroidUuid.shortUuid(characteristic.uuid)}"
+                        )
+                        eventEmitter.emitCharacteristicEvent(remoteId, "read", characteristic)
+                    }
+                }
 
-            override fun onCharacteristicWriteOK(characteristic: BluetoothGattCharacteristic) {
-                ElinkNativeLogger.d(
-                    "characteristic write remoteId=$remoteId uuid=${ElinkAndroidUuid.shortUuid(characteristic.uuid)}"
-                )
-                eventEmitter.emitCharacteristicEvent(remoteId, "write", characteristic)
-            }
+                override fun onCharacteristicWriteOK(characteristic: BluetoothGattCharacteristic) {
+                    withCurrentDeviceListener(remoteId, device) {
+                        ElinkNativeLogger.d(
+                            "characteristic write remoteId=$remoteId uuid=${ElinkAndroidUuid.shortUuid(characteristic.uuid)}"
+                        )
+                        eventEmitter.emitCharacteristicEvent(remoteId, "write", characteristic)
+                    }
+                }
 
-            override fun onDescriptorWriteOK(descriptor: BluetoothGattDescriptor) {
-                ElinkNativeLogger.d(
-                    "descriptor write remoteId=$remoteId uuid=${ElinkAndroidUuid.shortUuid(descriptor.uuid)}"
-                )
-                eventEmitter.emitCharacteristicEvent(remoteId, "descriptorWrite", descriptor)
-            }
+                override fun onDescriptorWriteOK(descriptor: BluetoothGattDescriptor) {
+                    withCurrentDeviceListener(remoteId, device) {
+                        ElinkNativeLogger.d(
+                            "descriptor write remoteId=$remoteId uuid=${ElinkAndroidUuid.shortUuid(descriptor.uuid)}"
+                        )
+                        eventEmitter.emitCharacteristicEvent(remoteId, "descriptorWrite", descriptor)
+                    }
+                }
 
-            override fun onCharacteristicChanged(characteristic: BluetoothGattCharacteristic) {
-                ElinkNativeLogger.d(
-                    "characteristic changed remoteId=$remoteId uuid=${ElinkAndroidUuid.shortUuid(characteristic.uuid)}"
-                )
-                eventEmitter.emitCharacteristicEvent(remoteId, "changed", characteristic)
-            }
-        })
-        device.setOnBleRssiListener(object : OnBleRssiListener {
-            override fun OnRssi(rssi: Int) {
-                ElinkNativeLogger.d("rssi remoteId=$remoteId rssi=$rssi")
-                eventEmitter.emitRssi(remoteId, rssi)
-            }
-        })
-        device.setOnBleMtuListener(object : OnBleMtuListener {
-            override fun OnMtu(mtu: Int) {
-                ElinkNativeLogger.d("mtu remoteId=$remoteId mtu=$mtu")
-                eventEmitter.emitMtu(remoteId, mtu, null)
-            }
+                override fun onCharacteristicChanged(characteristic: BluetoothGattCharacteristic) {
+                    withCurrentDeviceListener(remoteId, device) {
+                        ElinkNativeLogger.d(
+                            "characteristic changed remoteId=$remoteId uuid=${ElinkAndroidUuid.shortUuid(characteristic.uuid)}"
+                        )
+                        eventEmitter.emitCharacteristicEvent(remoteId, "changed", characteristic)
+                    }
+                }
+            })
+            device.setOnBleRssiListener(object : OnBleRssiListener {
+                override fun OnRssi(rssi: Int) {
+                    withCurrentDeviceListener(remoteId, device) {
+                        ElinkNativeLogger.d("rssi remoteId=$remoteId rssi=$rssi")
+                        eventEmitter.emitRssi(remoteId, rssi)
+                    }
+                }
+            })
+            device.setOnBleMtuListener(object : OnBleMtuListener {
+                override fun OnMtu(mtu: Int) {
+                    withCurrentDeviceListener(remoteId, device) {
+                        ElinkNativeLogger.d("mtu remoteId=$remoteId mtu=$mtu")
+                        eventEmitter.emitMtu(remoteId, mtu, null)
+                    }
+                }
 
-            override fun onMtuAvailable(mtu: Int) {
-                ElinkNativeLogger.d("mtuAvailable remoteId=$remoteId availableMtu=$mtu")
-                eventEmitter.emitMtu(remoteId, null, mtu)
-            }
-        })
+                override fun onMtuAvailable(mtu: Int) {
+                    withCurrentDeviceListener(remoteId, device) {
+                        ElinkNativeLogger.d("mtuAvailable remoteId=$remoteId availableMtu=$mtu")
+                        eventEmitter.emitMtu(remoteId, null, mtu)
+                    }
+                }
+            })
+        } catch (error: Throwable) {
+            deviceListenerBindings.removeIfCurrent(remoteId, device)
+            ElinkNativeLogger.e(
+                "attach device listeners failed remoteId=$remoteId error=${error.message ?: error}",
+                error
+            )
+            throw error
+        }
+    }
+
+    // 仅允许当前 BleDevice 实例的监听回调继续向 Flutter 发送事件。
+    private inline fun withCurrentDeviceListener(
+        remoteId: String,
+        device: BleDevice,
+        action: () -> Unit
+    ) {
+        if (!deviceListenerBindings.isCurrent(remoteId, device)) {
+            ElinkNativeLogger.d(
+                "ignore stale device listener remoteId=$remoteId instance=${System.identityHashCode(device)}"
+            )
+            return
+        }
+        action()
     }
 
     private fun adapterStateName(): String {
@@ -792,12 +883,15 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
         }.getOrDefault(false)
     }
 
-    private fun markScanStopped() {
-        if (isScanning || activeScanConfig != null) {
+    // 将扫描状态切换为停止，并返回本次调用前是否存在活动扫描。
+    private fun markScanStopped(): Boolean {
+        val wasScanning = isScanning || activeScanConfig != null
+        if (wasScanning) {
             lastScanStopElapsedMs = SystemClock.elapsedRealtime()
         }
         isScanning = false
         activeScanConfig = null
+        return wasScanning
     }
 
     private fun pruneScanStartHistory(nowMs: Long) {
@@ -933,7 +1027,7 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
         stopScanInternal(emitStopped = false)
         disconnectManagedConnections()
         scanResults.clear()
-        listenerAttachedRemoteIds.clear()
+        deviceListenerBindings.clear()
     }
 
     // 主动 dispose 时断开当前 Engine 托管的全部设备，同时保留 Engine 级 SDK 初始化能力。
@@ -966,6 +1060,7 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
         private const val ELINK_WRITE_CHARACTERISTIC = "FFE1"
         private const val ELINK_NOTIFY_CHARACTERISTIC = "FFE2"
         private const val ELINK_WRITE_NOTIFY_CHARACTERISTIC = "FFE3"
+        private const val BLUETOOTH_OFF_REASON = "bluetooth_off"
         private const val ANDROID_SCAN_LIMIT_WINDOW_MS = 30_000L
         private const val ANDROID_SCAN_LIMIT_MAX_STARTS = 5
         private const val ANDROID_SCAN_RESTART_COOLDOWN_MS = 1_000L
