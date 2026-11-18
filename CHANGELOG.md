@@ -1,3 +1,15 @@
+## 0.3.3
+
+* Added optional paired service/characteristic UUIDs to `write`, with strict
+  UUID and discovered-target validation. Default Elink writes remain unchanged.
+* Updated the Android native SDK to `1.15.19` and the bundled iOS SDK to `1.13.0`.
+* Added `sendDataNow` for immediate full-packet submission on Android and iOS,
+  and `setConnectPriority` (returns false without changes on iOS).
+* Added platform-neutral `setMtu`, `setPreferredPhy`, `setCommandResendCount`,
+  `ElinkPhy`, `ElinkScanMode`, and `startScan(scanMode: ...)` APIs. Existing
+  Android-named APIs and channel contracts remain compatible. iOS ignores scan
+  mode and resend settings, and returns false for MTU/PHY configuration.
+
 ## 0.3.2
 
 * Fixed Android device listeners not being reattached when a Bluetooth adapter

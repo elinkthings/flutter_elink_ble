@@ -24,7 +24,9 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, assign) NSUInteger age;           //Age 28 (only counts for the whole year)(年龄28(只算整年))
 @property (nonatomic, assign) NSUInteger  height;       //Height 170 (Unit fixed to death: cm, accuracy 1)(身高170(单位定死:cm,精度1))
 @property (nonatomic, assign) NSUInteger  weight;       //Weight 562 (Unit fixed death: kg, accuracy 0.1) 120lb-》 54.4lkg-》 545(体重562(单位定死:kg,精度0.1) 120lb-》54.4lkg-》545)
-
+@property (nonatomic, assign) NSUInteger  goalWeight;
+//初始体重
+@property (nonatomic, assign) NSUInteger  weightFirst;
 @property (nonatomic, assign) NSUInteger adc;//Impedance 1230 (accuracy is 1Ω)(阻抗1230(精度为 1Ω))
 
 @end

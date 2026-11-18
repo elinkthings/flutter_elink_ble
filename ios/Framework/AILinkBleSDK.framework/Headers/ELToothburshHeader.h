@@ -48,9 +48,12 @@ typedef NS_ENUM(NSUInteger, ToothbrushDataType) {
     ToothbrushDataTypeGetTwoGearDefault_A70D = 0x0D,//Get second gear default(获取二档默认)
     ToothbrushDataTypeAppPreventSplashing_A710 = 0x10,//APP request Prevent Splashing mode 防飞溅
     ToothbrushDataTypeMcuPreventSplashing_A711 = 0x11,//MCU response Prevent Splashing mode 防飞溅
+    ToothbrushDataType6ZoneData_A7FA = 0xFA, //  6-zone data reporting format (6区数据上报)
+    ToothbrushDataType16ZoneData_A7FB = 0xFB, // 16-zone data reporting format (16面数据上报)
     ToothbrushDataTypeGetTwoGearDefault_A7FC = 0xFC,//获取当前工作状态（针对获取已工作时长）
     ToothbrushDataTypeToothbrushData_A7FD = 0xFD,//Brushing data(刷牙数据)
     ToothbrushDataTypeReportResult_A7FE = 0xFE,//Report received data result(上报接收数据结果)
+    ToothbrushDataTypeReportResult_A780 = 0x80,//Get device supported features(获取设备支持的功能)
 };
 
 typedef NS_ENUM(NSUInteger, ToothbrushA6DataType) {
@@ -62,7 +65,32 @@ typedef NS_ENUM(NSUInteger, ToothbrushA6DataType) {
     ToothbrushA6DataTypeOfflineDataClear_14 = 0x14, //Cmd toothbrush offline data clear(APP 请求清空离线历史记录 二级指令 0x14)
     ToothbrushA6DataTypeOfflineData_15 = 0x15, //Data toothbrush offline data(离线历史记录数据上报给 APP 二级指令 0x15)
     ToothbrushA6DataTypeGetOfflineData_16 = 0x16, //Obtain offline history records, this command is sent one by one and then sent again when offline history records are received 获取离线历史记录，该命令为逐条发送再收到离线历史记录的时候再次发送该命令
+    ToothbrushA6DataTypeFactoryReset_22      = 0x22, //Factory reset(恢复出厂设置)
+    ToothbrushA6DataTypeNetworkDetection_4B = 0x4B, //特殊指令控制，A6 包 Type 字节（非 0xC0 二级指令）
 };
+
+/// 特殊指令控制 0x4B 的 OP
+typedef NS_ENUM(NSUInteger, ToothbrushSpecialCmdOP) {
+    ToothbrushSpecialCmdOPPingNetwork_05 = 0x05, //ping 网络
+};
+
+/// 单次 ping 结果。次数不足时该次为 ToothbrushPingResultNone_FF，对应超时时间为 0xFFFF
+typedef NS_ENUM(NSUInteger, ToothbrushPingResult) {
+    ToothbrushPingResultSuccess_00 = 0x00, //成功
+    ToothbrushPingResultFail_01 = 0x01,    //失败
+    ToothbrushPingResultNone_FF = 0xFF,    //该次未执行
+};
+
+/// ping 网络回复。超时时间单位 ms，小端序；未执行的次数 result 为 0xFF、timeout 为 0xFFFF
+typedef struct {
+    int count;          //ping 目标次数，1-3
+    int firstResult;    //第一次：0 成功，1 失败
+    int firstTimeout;
+    int secondResult;   //第二次；count < 2 时为 0xFF
+    int secondTimeout;
+    int thirdResult;    //第三次；count < 3 时为 0xFF
+    int thirdTimeout;
+} ToothbrushPingNetworkResult, ToothbrushPingNetworkResult;
 
 
 typedef NS_ENUM(NSUInteger, ToothbrushSetResult) {
@@ -115,6 +143,7 @@ typedef struct {
     ToothbrushWorkPhaseType workPhase;  //工作阶段
     int workTime;   //已工作时间
     int defaultWorktime;    //默认工作时长，未获取到为FF
+    int brushingArea; //目前在刷的区域(具体数据见表"编号区域对应表")
 } ToothBrushNewWorkPhase, ToothBrushNewWorkPhase;
 
 //
@@ -149,5 +178,46 @@ typedef struct {
     unsigned char battery;//电池电量
     unsigned short defaultWorkTime; //默认工作总时长
 } ToothbrushOfflineData;
+
+
+// Brushing data (0xFA) - 6-Zone mode (6区刷牙数据总结)
+typedef struct {
+    ToothbrushGearType gear;  // 工作档位
+    int workTime;             // 实际刷牙时长
+    int ucTime;               // 上颚中间部分刷牙时长 单位：秒
+    int dcTime;               // 下颚中间部分刷牙时长 单位：秒
+    int urTime;               // 上颚右边部分刷牙时长 单位：秒
+    int drTime;               // 下颚右边部分刷牙时长 单位：秒
+    int ulTime;               // 上颚左边部分刷牙时长 单位：秒
+    int dlTime;               // 下颚左边部分刷牙时长 单位：秒
+    int battery;              // 电池电量
+    int defaultWorkTime;      // 默认刷牙时长
+} ToothbrushData6Zone;
+
+
+// Brushing data (0xFB) - 16-Zone mode (16区刷牙数据总结)
+typedef struct {
+    ToothbrushGearType gear;  // 工作档位
+    int workTime;             // 实际刷牙时长
+    int ucoTime;               // 上颚中间部分外侧面刷牙时长 单位：秒
+    int dcoTime;               // 下颚中间部分外侧面刷牙时长 单位：秒
+    int uloTime;               // 上颚左边部分外侧面刷牙时长 单位：秒
+    int dloTime;               // 下颚左边部分外侧面刷牙时长 单位：秒
+    int uroTime;               // 上颚右边部分外侧面刷牙时长 单位：秒
+    int droTime;               // 下颚右边部分外侧面刷牙时长 单位：秒
+    int uldTime;               // 上颚左边部分咬合面刷牙时长 单位：秒
+    int uciTime;               // 上颚中间部分内侧面刷牙时长 单位：秒
+    int urdTime;               // 上颚右边部分咬合面刷牙时长 单位：秒
+    int dluTime;               // 下颚左边部分咬合面刷牙时长 单位：秒
+    int dciTime;               // 下颚中间部分内侧面刷牙时长 单位：秒
+    int druTime;               // 下颚右边部分咬合面刷牙时长 单位：秒
+    int uliTime;               // 上颚左边部分内侧面刷牙时长 单位：秒
+    int dliTime;               // 下颚左边部分内侧面刷牙时长 单位：秒
+    int uriTime;               // 上颚右边部分内侧面刷牙时长 单位：秒
+    int driTime;               // 下颚右边部分内侧面刷牙时长 单位：秒
+    int battery;              // 电池电量
+    int defaultWorkTime;      // 默认刷牙时长
+} ToothbrushData16Zone;
+
 
 #endif /* ELToothburshHeader_h */

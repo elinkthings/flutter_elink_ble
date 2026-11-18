@@ -145,27 +145,46 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
                     readRssiInternal(remoteId)
                     result.success(null)
                 }
-                "setAndroidMtu" -> {
+                "setMtu", "setAndroidMtu" -> {
                     val remoteId = call.argument<String>("remoteId") ?: ""
                     val mtu = call.argument<Int>("mtu") ?: 0
                     result.success(setAndroidMtuInternal(remoteId, mtu))
                 }
-                "setAndroidPreferredPhy" -> {
+                "setPreferredPhy", "setAndroidPreferredPhy" -> {
                     val remoteId = call.argument<String>("remoteId") ?: ""
                     val txPhy = call.argument<Int>("txPhy") ?: 0
                     val rxPhy = call.argument<Int>("rxPhy") ?: 0
                     result.success(setAndroidPreferredPhyInternal(remoteId, txPhy, rxPhy))
                 }
-                "setAndroidCommandResendCount" -> {
+                "setCommandResendCount", "setAndroidCommandResendCount" -> {
                     val resendCount = call.argument<Int>("resendCount") ?: 0
                     setAndroidCommandResendCountInternal(resendCount)
                     result.success(null)
+                }
+                "setConnectPriority" -> {
+                    val remoteId = call.argument<String>("remoteId") ?: ""
+                    val priority = requireNotNull(call.argument<Int>("priority")) {
+                        "Missing priority"
+                    }
+                    result.success(setConnectPriorityInternal(remoteId, priority))
+                }
+                "sendDataNow" -> {
+                    val remoteId = call.argument<String>("remoteId") ?: ""
+                    val data = requireNotNull(call.argument<ByteArray>("data")) {
+                        "Missing data"
+                    }
+                    val type = call.argument<String>("type") ?: "withoutResponse"
+                    result.success(sendDataNowInternal(remoteId, data, type))
                 }
                 "write" -> {
                     val remoteId = call.argument<String>("remoteId") ?: ""
                     val data = call.argument<ByteArray>("data") ?: byteArrayOf()
                     val type = call.argument<String>("type") ?: "withoutResponse"
-                    writeInternal(remoteId, data, type)
+                    writeInternal(
+                        remoteId, data, type,
+                        call.argument<String>("serviceUuid"),
+                        call.argument<String>("characteristicUuid")
+                    )
                     result.success(null)
                 }
                 "writeA6" -> {
@@ -573,8 +592,44 @@ class ElinkBlePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, EventChan
         return device.setPreferredPhy(txPhy, rxPhy)
     }
 
-    private fun writeInternal(remoteId: String, data: ByteArray, type: String) {
+    // 请求目标连接优先级，返回 SDK 接受结果，不表示参数已经生效。
+    private fun setConnectPriorityInternal(remoteId: String, priority: Int): Boolean {
+        require(priority in 0..2) { "priority must be 0, 1 or 2" }
+        ensureSdkReady()
+        if (!hasConnectPermission()) {
+            throw SecurityException("Missing Bluetooth connect permission")
+        }
+        ensureBluetoothPoweredOn()
+        val device = AILinkBleManager.getInstance().getBleDevice(remoteId)
+            ?: throw IllegalStateException("Device is not connected: $remoteId")
+        ElinkNativeLogger.d("setConnectPriority remoteId=$remoteId priority=$priority")
+        return device.setConnectPriority(priority)
+    }
+
+    // 将完整数据包提交目标设备的即时发送队列，空数据或 SDK 拒绝时返回 false。
+    private fun sendDataNowInternal(remoteId: String, data: ByteArray, type: String): Boolean {
+        if (data.isEmpty()) return false
         val device = writableDevice(remoteId)
+        ElinkNativeLogger.d("sendDataNow remoteId=$remoteId type=$type data=${ElinkNativeLogger.hex(data)}")
+        return ElinkAndroidImmediateWrite.send(device, data, type)
+    }
+
+    // 默认沿用 Elink 写入路径；自定义 UUID 成对指定，经校验后仍交由 SDK 排队。
+    private fun writeInternal(
+        remoteId: String,
+        data: ByteArray,
+        type: String,
+        serviceUuid: String?,
+        characteristicUuid: String?
+    ) {
+        require((serviceUuid == null) == (characteristicUuid == null)) {
+            "serviceUuid and characteristicUuid must be provided together"
+        }
+        val device = writableDevice(remoteId)
+        if (serviceUuid != null && characteristicUuid != null) {
+            ElinkAndroidCustomWrite.send(device, data, serviceUuid, characteristicUuid)
+            return
+        }
         val writeUuid = if (type == "withResponse") {
             BleConfig.UUID_WRITE_AILINK
         } else {

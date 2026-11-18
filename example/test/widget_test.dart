@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_elink_ble/flutter_elink_ble.dart';
 import 'package:flutter_elink_ble_example/bluetooth_connection_page.dart';
 import 'package:flutter_elink_ble_example/connected_device_info.dart';
 import 'package:flutter_elink_ble_example/main.dart';
@@ -17,11 +18,13 @@ void main() {
     expect(find.byIcon(Icons.wifi), findsNothing);
   });
 
-  testWidgets('connection page exposes WiFi and MTU actions', (
+  testWidgets('connection page routes actions and selected priority', (
     WidgetTester tester,
   ) async {
     var opened = false;
     var mtuRequested = false;
+    var randomQueries = 0;
+    ElinkConnectionPriority? selectedPriority;
     var logsCleared = false;
 
     await tester.pumpWidget(
@@ -39,6 +42,8 @@ void main() {
             onClearLogs: () => logsCleared = true,
             onDisconnect: () {},
             onGetBmVersion: () {},
+            onSendRandomQuery: () => randomQueries++,
+            onSetConnectPriority: (priority) => selectedPriority = priority,
             mtuActionLabel: 'Set MTU 517',
             onMtuAction: () => mtuRequested = true,
             onOpenWifiProvisioning: () => opened = true,
@@ -53,10 +58,20 @@ void main() {
 
     await tester.tap(find.byIcon(Icons.wifi));
     await tester.tap(find.text('Set MTU 517'));
+    await tester.tap(find.text('Send random query now'));
+    await tester.tap(find.byTooltip('Set connection priority'));
+    await tester.pumpAndSettle();
+    for (final priority in ElinkConnectionPriority.values) {
+      expect(find.text(priority.name), findsOneWidget);
+    }
+    await tester.tap(find.text('high'));
+    await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Clear logs'));
 
     expect(opened, isTrue);
     expect(mtuRequested, isTrue);
+    expect(randomQueries, 1);
+    expect(selectedPriority, ElinkConnectionPriority.high);
     expect(logsCleared, isTrue);
   });
 }

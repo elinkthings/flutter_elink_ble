@@ -211,7 +211,8 @@ NS_ASSUME_NONNULL_BEGIN
 
 /// 解析设备支持的营养秤单位
 /// @param data 蓝牙发送的原始数据
-+ (NSArray<NSNumber *> *)analysisBluetoothSupportNutritionUnitArray:(NSData *)data;
+/// @param isAirefresh AIlink营养秤的单位解析和好营养的单位解析不一样
++ (NSArray<NSNumber *> *)analysisBluetoothSupportNutritionUnitArray:(NSData *)data isAirefresh:(BOOL)isAirefresh;
 
 /**
  解析蓝牙接收密钥的结果

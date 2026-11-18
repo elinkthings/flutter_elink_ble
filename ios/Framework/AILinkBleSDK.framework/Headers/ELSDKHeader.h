@@ -13,6 +13,9 @@
 
 //Bluetooth command type(蓝牙指令类型)
 typedef NS_ENUM(NSUInteger, ELInetBleDataType) {
+    
+    ELInetBleDataPackHead_A5        = 0xA5,
+    ELInetBleDataPackTail_5A        = 0x5A,
     ELInetBleDataPackHead_A6        = 0xA6,
     ELInetBleDataPackTail_6A        = 0x6A,
     ELInetBleDataPackHead_A7        = 0xA7,
@@ -47,6 +50,7 @@ typedef NS_ENUM(NSUInteger, ELInetGetCmdType) {
     ELInetGetCmdTypeGetBasicInfoData         = 0x36, //Obtain basic device information data(获取设备基本信息数据)
     ELInetGetCmdTypeSyncMCUNowDate           = 0x38, //MCU request sync the current time of the system(MCU请求设置手机时间给MCU)
     ELInetGetCmdTypeGetBMVersionPro          = 0x46, //增强版-Read the BM module software and hardware version number(读取BM模块软硬件版本号)
+    ELInetGetCmdTypeGetMTU                   = 0x47, // Get Maximum Transmission Unit (获取MTU大小/获取平台参数)
 #pragma mark  ============ Begin 蓝牙Wifi ==============
     ELInetGetCmdTypeBleWifiGetNearbyWifi     = 0x80, //Get nearby Wifi(获取附近Wifi)
     ELInetGetCmdTypeBleWifiReceiveWifiName   = 0x81, //Reply to wifi name(回复wifi名字)

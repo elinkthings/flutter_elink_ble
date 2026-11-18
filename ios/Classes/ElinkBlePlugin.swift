@@ -142,6 +142,9 @@ public class ElinkBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
         return
       }
       getIosMtu(remoteId: remoteId, result: result)
+    case "setMtu", "setPreferredPhy", "setConnectPriority":
+      // iOS 不开放主动配置这些连接参数，统一入口返回未执行，无需调用方判断平台。
+      result(false)
     case "setAndroidMtu", "setAndroidPreferredPhy":
       result(
         FlutterError(
@@ -150,9 +153,28 @@ public class ElinkBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
           details: nil
         )
       )
-    case "setAndroidCommandResendCount":
+    case "setCommandResendCount", "setAndroidCommandResendCount":
       // Android 专用重发配置；iOS 侧无对应 SDK 能力，保持 no-op 以稳定跨端调用。
       result(nil)
+    case "sendDataNow":
+      guard
+        let args = call.arguments as? [String: Any],
+        let remoteId = args["remoteId"] as? String,
+        let data = args["data"] as? FlutterStandardTypedData
+      else {
+        result(FlutterError(code: "bad_args", message: "Missing sendDataNow arguments", details: nil))
+        return
+      }
+      if data.data.isEmpty {
+        result(false)
+        return
+      }
+      let readiness = requireReadySession(remoteId: remoteId)
+      guard let session = readiness.session else {
+        result(readiness.error)
+        return
+      }
+      result(session.sendDataNow(data.data))
     case "write":
       guard
         let args = call.arguments as? [String: Any],
@@ -160,6 +182,26 @@ public class ElinkBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
         let data = args["data"] as? FlutterStandardTypedData
       else {
         result(FlutterError(code: "bad_args", message: "Missing write arguments", details: nil))
+        return
+      }
+      if args["serviceUuid"] != nil || args["characteristicUuid"] != nil {
+        guard let serviceUuid = args["serviceUuid"] as? String,
+          let characteristicUuid = args["characteristicUuid"] as? String
+        else {
+          result(FlutterError(code: "bad_args", message: "serviceUuid and characteristicUuid must be provided together", details: nil))
+          return
+        }
+        let readiness = requireReadySession(remoteId: remoteId)
+        guard let session = readiness.session else {
+          result(readiness.error)
+          return
+        }
+        result(session.writeCustom(
+          data.data,
+          serviceUuid: serviceUuid,
+          characteristicUuid: characteristicUuid,
+          type: args["type"] as? String ?? "withoutResponse"
+        ))
         return
       }
       if let error = write(data: data.data, remoteId: remoteId) {

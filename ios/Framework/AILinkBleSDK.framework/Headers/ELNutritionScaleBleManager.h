@@ -47,6 +47,14 @@ NS_ASSUME_NONNULL_BEGIN
 
 + (instancetype)shareManager;
 
+/// 当前生效的 CID（SDK 内置 + App 传入）
+- (NSArray<NSNumber *> *)supportCids;
+
+- (BOOL)isSupportCid:(ELSupportDeviceType)cid;
+
+/// 从 App 传入同协议额外 CID，扫描前调用。无需改 SDK。
+- (void)registerExtraCids:(NSArray<NSNumber *> *)cids;
+
 @end
 
 @interface ELNutritionScaleBleManager ()

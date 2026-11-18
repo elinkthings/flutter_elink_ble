@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_elink_ble/flutter_elink_ble.dart';
 
 import 'android_resend_count_setting.dart';
 import 'connected_device_info.dart';
@@ -14,6 +15,8 @@ class BluetoothConnectionPage extends StatelessWidget {
     required this.onClearLogs,
     required this.onDisconnect,
     required this.onGetBmVersion,
+    required this.onSendRandomQuery,
+    this.onSetConnectPriority,
     required this.mtuActionLabel,
     required this.onMtuAction,
     required this.onOpenWifiProvisioning,
@@ -40,6 +43,12 @@ class BluetoothConnectionPage extends StatelessWidget {
 
   /// Callback for querying BM module version (查询 BM 模块版本的回调).
   final VoidCallback onGetBmVersion;
+
+  /// 向当前设备即时发送随机查询指令。
+  final VoidCallback onSendRandomQuery;
+
+  /// 请求当前 Android 连接的优先级，未提供回调时隐藏菜单。
+  final ValueChanged<ElinkConnectionPriority>? onSetConnectPriority;
 
   /// MTU 操作按钮文案，Android 设置 MTU，iOS 查询最大写入长度。
   /// MTU action button text; Android sets MTU, iOS reads maximum write length.
@@ -201,6 +210,21 @@ class BluetoothConnectionPage extends StatelessWidget {
           icon: const Icon(Icons.swap_vert),
           label: Text(mtuActionLabel),
         ),
+        FilledButton.tonalIcon(
+          onPressed: onSendRandomQuery,
+          icon: const Icon(Icons.shuffle),
+          label: const Text('Send random query now'),
+        ),
+        if (onSetConnectPriority != null)
+          PopupMenuButton<ElinkConnectionPriority>(
+            tooltip: 'Set connection priority',
+            icon: const Icon(Icons.tune),
+            onSelected: onSetConnectPriority,
+            itemBuilder: (_) => [
+              for (final priority in ElinkConnectionPriority.values)
+                PopupMenuItem(value: priority, child: Text(priority.name)),
+            ],
+          ),
       ],
     );
   }

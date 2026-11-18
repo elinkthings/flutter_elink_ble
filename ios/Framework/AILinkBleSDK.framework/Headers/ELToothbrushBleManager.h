@@ -75,6 +75,15 @@ NS_ASSUME_NONNULL_BEGIN
 /// @param data 刷牙数据
 - (void)toothbrushtReceiveToothbrushData:(ToothbrushData)data;
 
+/// Call back 6-zone brushing data (回调6区刷牙数据)
+/// @param data 6区刷牙数据
+- (void)toothbrushtReceive6ZoneData:(ToothbrushData6Zone)data;
+
+
+/// Call back 16-zone brushing data (回调16区刷牙数据)
+/// @param data 16区刷牙数据
+- (void)toothbrushtReceive16ZoneData:(ToothbrushData16Zone)data;
+
 /// Call back brushing offline data(回调刷牙数据)
 /// @param data 刷牙离线数据
 - (void)toothbrushtReceiveToothbrushOfflineData:(ToothbrushOfflineData)data;
@@ -93,6 +102,17 @@ NS_ASSUME_NONNULL_BEGIN
 //MCU response Prevent Splashing mode 防飞溅
 - (void)toothbrushtReceivePreventSplashing:(Byte)support on:(Byte)on;
 
+//MCU回复获取设备支持的功能
+- (void)toothbrushtReceiveDeviceSupportedFeatures:(NSData *)supportedFeaturesData;
+
+/** 模组回复 ping 网络，Type 0x4B OP 0x05 */
+- (void)toothbrushReceivePingNetworkResult:(ToothbrushPingNetworkResult)result;
+
+
+// 接收 MTU 信息回调
+// @param mtu 组合后的实际 MTU 值
+// @param syncStatus 是否已同步 (1: 已同步, 0: 未同步)
+- (void)toothbrushReceiveDeviceMTU:(UInt16)mtu syncStatus:(UInt8)syncStatus;
 @end
 
 
@@ -109,6 +129,14 @@ NS_ASSUME_NONNULL_BEGIN
 
 
 + (instancetype)shareManager;
+
+/// 当前生效的 CID（SDK 内置 + App 传入）
+- (NSArray<NSNumber *> *)supportCids;
+
+- (BOOL)isSupportCid:(ELSupportDeviceType)cid;
+
+/// 传入同协议的额外 CID，扫描前调用。新增 CID 不用改 SDK。
+- (void)registerExtraCids:(nonnull NSArray<NSNumber *> *)cids;
 
 
 //Get supported gear(获取支持的档位)
@@ -216,6 +244,22 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)getPreventSplashingMode;
 - (void)setPreventSplashingMode:(BOOL)on;
 
+//获取设备支持的功能
+- (void)getDeviceSupportedFeatures;
+
+/** Ping 网络，Type 0x4B OP 0x05
+ * @param count 目标次数，范围 1-3
+ * @param address 自定义目标地址。nil 或空字符串时地址长度为 0：优先使用 0x8B 设置的通信地址，否则使用默认地址
+ */
+- (void)pingNetworkWithCount:(NSInteger)count address:(nullable NSString *)address;
+
+
+//恢复出厂设置
+- (void)sendFactoryResetCommand;
+
+
+//获取MTU（最大传输单元）
+- (void)getMTU;
 @end
 
 NS_ASSUME_NONNULL_END

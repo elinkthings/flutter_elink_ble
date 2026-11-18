@@ -64,6 +64,41 @@ abstract class FlutterElinkBlePlatform extends PlatformInterface {
     throw UnimplementedError('readRssi() has not been implemented.');
   }
 
+  /// 请求 MTU；不支持主动配置的平台返回 false。
+  Future<bool> setMtu(String remoteId, int mtu) {
+    throw UnimplementedError('setMtu() has not been implemented.');
+  }
+
+  /// 请求首选 PHY；不支持主动配置的平台返回 false。
+  Future<bool> setPreferredPhy({
+    required String remoteId,
+    required int txPhy,
+    required int rxPhy,
+  }) {
+    throw UnimplementedError('setPreferredPhy() has not been implemented.');
+  }
+
+  /// 设置重发次数，0 关闭；不支持的平台忽略该配置。
+  Future<void> setCommandResendCount(int resendCount) {
+    throw UnimplementedError(
+      'setCommandResendCount() has not been implemented.',
+    );
+  }
+
+  /// 请求连接优先级，返回是否接受；不支持的平台返回 false。
+  Future<bool> setConnectPriority(String remoteId, int priority) {
+    throw UnimplementedError('setConnectPriority() has not been implemented.');
+  }
+
+  /// 即时提交完整数据包；返回提交结果，不代表设备收包成功。
+  Future<bool> sendDataNow({
+    required String remoteId,
+    required Uint8List data,
+    required String type,
+  }) {
+    throw UnimplementedError('sendDataNow() has not been implemented.');
+  }
+
   Future<bool> setAndroidMtu(String remoteId, int mtu) {
     throw UnimplementedError('setAndroidMtu() has not been implemented.');
   }
@@ -91,10 +126,13 @@ abstract class FlutterElinkBlePlatform extends PlatformInterface {
     );
   }
 
+  /// 写入完整数据；自定义服务与特征 UUID 必须成对提供，不传时使用原有路径。
   Future<void> write({
     required String remoteId,
     required Uint8List data,
     required String type,
+    String? serviceUuid,
+    String? characteristicUuid,
   }) {
     throw UnimplementedError('write() has not been implemented.');
   }

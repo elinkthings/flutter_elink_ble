@@ -72,7 +72,45 @@ typedef NS_ENUM(NSInteger , ELBodyFatScaleBleDataType) {
     ELBodyFatScaleBleDataType_MCUBackNeedsFillBodyData     = 0x0E ,
     /** MCU->APP:设备上报模式 */
     ELBodyFatScaleBleDataType_MCUReportingMode     = 0x0F ,
+    
+    /** APP 查询/下发体脂/抱婴模式切换 */
+    ELBodyFatScaleBleDataType_AppSendMode = 0x10,
+    /** MCU发送体脂/抱婴模式切换结果给App */
+    ELBodyFatScaleBleDataType_MCUBackSendModeResult = 0x11,
+    /** MCU上报婴儿重量 */
+    ELBodyFatScaleBleDataType_MCUReportingBabyWeight = 0x12,
+    
+    /** 同步用户成功 */
+    ELBodyFatScaleBleDataType_SynUserSucess = 0x14,
+    /** App回复MCU上报婴儿重量结果 */
+    ELBodyFatScaleBleDataType_AppBackReportingBabyWeightResult = 0x13,
 
+    /** added by tj APP下发用户头像名称版本 */
+    ELBodyFatScaleBleDataType_AppToDeviceAvatarAndnickName  = 0x15,
+    
+    /** added by tj App发送指令切换 */
+    ELBodyFatScaleBleDataType_AppToDeviceLanguage  = 0x16,
+    
+    /** 模组返回体脂数据 */
+    ELBodyFatScaleBleDataType_ModuleReturnsBodyFatData = 0x20,
+    
+    /** MCU设置需要体脂  若MCU端有UI界面显示体脂时,可以通过该指令通知app
+     APP测里完成后,app会把体脂数据同步到MCU 若MCU不需要体脂数据时,不要发该指令 */
+    ELBodyFatScaleBleDataType_MCURequiresBodyFat = 0x21,
+    
+    /** added by tj MCU切换用户 设备发过来的指令 */
+    ELBodyFatScaleBleDataType_MCUChageUser  = 0x28,
+    
+    /** added by tj APP请求当前分辨率 */
+    ELBodyFatScaleBleDataType_AppToGetDeviceResolution  = 0x30,
+    
+    /** added by tj APP请求同步历史记录 */
+    ELBodyFatScaleBleDataType_AppToAskSyncHistoryRecord  = 0x31,
+    
+    /** added by tj APP请求同步历史记录 */
+    ELBodyFatScaleBleDataType_MCU_History_data_fromDevice  = 0x32,
+    /** added by tj APP下发当前用户列表版本 */
+    ELBodyFatScaleBleDataType_SendCurrentUserListVersion  = 0x34,
     /** App发送指令切换单位 */
     ELBodyFatScaleBleDataType_AppSendUnit                   = 0x81 ,
     /** MCU发送体脂数据给App,发送完毕(一次完整测量结束) */
@@ -81,14 +119,15 @@ typedef NS_ENUM(NSInteger , ELBodyFatScaleBleDataType) {
     ELBodyFatScaleBleDataType_ReceivedDataResult            = 0xFE ,
     /** 设备上发错误码 */
     ELBodyFatScaleBleDataType_MCUBackErrorCode              = 0xFF ,
-    
-    
-    /** APP请求支持的显示项 */
-    ELBodyFatScaleBleDataType_MCUBackSupportDataList        = 0x11 ,
-    /** 6.1.11APP下发显示项和顺序 */
-    ELBodyFatScaleBleDataType_DeliverDisplayItemsTheirSequence       = 0x10 ,
 };
 
+
+typedef NS_ENUM(NSInteger , ELHMIBodyFatScaleBleDataType) {
+    /** APP请求支持的显示项 */
+    ELHMIBodyFatScaleBleDataType_MCUBackSupportDataList        = 0x11 ,
+    /** 6.1.11APP下发显示项和顺序 */
+    ELHMIBodyFatScaleBleDataType_DeliverDisplayItemsTheirSequence       = 0x10 ,
+};
 
 //MCU请求App用户信息状态
 typedef NS_ENUM(NSUInteger, BodyFatScaleMCURequestUserInfoStatus) {
@@ -143,5 +182,17 @@ typedef NS_ENUM(NSUInteger, BodyFatScaleRole) {
     BodyFatScaleRole_Pregnancy = 0x03,//Pregnancy(孕妇)
 };
 
+typedef NS_ENUM(NSUInteger, BodyFatScaleSetMode) {
+    BodyFatScaleSetMode_BodyFat = 0x00,
+    BodyFatScaleSetMode_HoldBaby = 0x01,
+    BodyFatScaleSetMode_EnableHoldBaby = 0x02,
+};
+
+typedef NS_ENUM(NSUInteger, BodyFatScaleMCUBackSetModeResult) {
+    BodyFatScaleMCUBackSetModeResult_Success = 0x00,
+    BodyFatScaleMCUBackSetModeResult_Failure = 0x01,
+    BodyFatScaleMCUBackSetModeResult_Support = 0x02,
+    BodyFatScaleMCUBackSetModeResult_NotSupport = 0x03,
+};
 
 #endif /* ELBodyFatScaleBleHeader_h */

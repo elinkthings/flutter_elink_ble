@@ -21,6 +21,9 @@ typedef NS_ENUM(NSUInteger, ELBloodBleDataType) {
     ELBloodBleDataTypeSetSwitchVoice    = 0x85, //Send voice alarm settings(下发语音报警设置)
     ELBloodBleDataTypeSwitchVoiceResult = 0x86, //Send voice alarm setting result(下发语音报警设置结果)
     ELBloodBleDataTypeFailCode          = 0xFF, //Report error code(上报错误码)
+    ELBloodBleDataTypeSyncHistory       = 0x10, //app同步历史数据
+    ELBloodBleDataTypeSyncHistoryStatus = 0x11, //历史数据发送结果
+    ELBloodBleDataTypeReceiveHistory     = 0x12, //app同步历史数据
 };
 
 
@@ -79,6 +82,11 @@ typedef NS_ENUM(NSUInteger, ELBloodBleDataType) {
  @param result 结果
  */
 -(void)bloodBleManagerReceiveSetSwitchVoiceOperationType:(ELBloodBleSwitchVoiceType)type result:(ELSetBluetoothResponseType)result;
+
+
+/** 设备返回历史记录 */
+- (void)bloodBleManagerReceiveBackOfflineHistory:(NSArray<ELBloodBleDataModel *> *_Nullable)history;
+
 @end
 
 
@@ -112,6 +120,10 @@ NS_ASSUME_NONNULL_BEGIN
  @param type operation type
  */
 -(void)sendSwitchVoice:(ELBloodBleSwitchVoiceType)type;
+
+//App获取离线历史记录
+- (void)getOfflineHistory;
+
 @end
 
 NS_ASSUME_NONNULL_END

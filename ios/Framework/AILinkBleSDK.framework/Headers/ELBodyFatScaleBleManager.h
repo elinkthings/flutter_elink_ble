@@ -27,6 +27,24 @@ NS_ASSUME_NONNULL_BEGIN
 
 #pragma mark 回调A7指令数据
 
+- (void)bodyFatScaleManagerCallBackSynUserSuccess;
+
+// 蓝牙回复0x34 指令
+- (void)bodyFatScaleManagerCallBackSendUserListVersion:(NSData *)playLoadData;
+
+/**
+ 6.1.23MCU切换用户()
+ */
+//- (void)bodyFatScaleManagerCallBackMCUchangeUserAction;
+
+
+- (void)bodyFatScaleManagerCallBackMCUchangeUserActionWithuserID:(NSData *)userIDData;
+
+/**
+ APP下发用户头像名称版本
+ */
+- (void)bodyFatScaleManagerCallBackindicatoruserAvatarAndNicknameWithData:(NSData *)data isNeedTochanege:(BOOL)haveto;
+
 /**
  Callback to set unit result(回调设置单位结果)
 
@@ -46,7 +64,11 @@ MCU requests user information( MCU 请求用户信息)
  Return weight and body fat model(返回重量及体脂model)
  */
 -(void)bodyFatScaleManagerCallBackWeight:(ELBodyFatScaleBleWeightModel *)weightModel state:(BodyFatScaleMeasureStatus)status;
-
+/**
+ Return weight and body fat model(返回重量及体脂model)
+ isRequires  0x01:需要体脂数据
+ */
+-(void)new_bodyFatScaleManagerCallBackWeight:(ELBodyFatScaleBleWeightModel *)weightModel state:(BodyFatScaleMeasureStatus)status mcuRequiresBodyFatData:(BOOL)isRequires;
 
 /**
  Return temperature (unit: ° C)(返回温度（单位：°C）)
@@ -78,6 +100,19 @@ MCU requests user information( MCU 请求用户信息)
  1:超重
  */
 -(void)bodyFatScaleManagerCallBackErrorCode:(NSInteger)code;
+
+/**
+ Callback to set body fat mode result(回调设置体脂/抱婴模式结果)
+
+ @param result 结果
+ */
+-(void)bodyFatScaleManagerCallBackSetMode:(BodyFatScaleSetMode)setMode result:(BodyFatScaleMCUBackSetModeResult)result;
+
+/**
+ Return weight  model for baby(返回婴儿重量model)
+ */
+-(void)bodyFatScaleManagerCallBackWeightForBaby:(ELBodyFatScaleBleWeightModel *)weightModel;
+
 #pragma mark 回调A6指令数据
 
 /**
@@ -119,6 +154,9 @@ MCU requests user information( MCU 请求用户信息)
  */
 - (void)bodyFatScaleManagerCallBackReportingMode:(NSInteger)mode;
 
+/** MCU 返回Device 的屏幕分辨率
+ */
+- (void)bodyFatScaleManagerCallBackResolutionOfDevice:(NSInteger)width height:(NSInteger)height;
 
 /** MCU 返回支持数据类型列表
  */
@@ -127,6 +165,10 @@ MCU requests user information( MCU 请求用户信息)
 /** MCU 返回显示项和顺序
  */
 - (void)bodyFatScaleManagerCallBackDisplayItemOrder:(NSMutableArray*)dataList;
+
+/** MCU 返回需要体脂数据 0x01:需要体脂数据
+ */
+- (void)bodyFatScaleManagerCallBackMCURequiresBodyFat:(NSInteger)op;
 @end
 
 
@@ -142,6 +184,8 @@ MCU requests user information( MCU 请求用户信息)
 
 #pragma mark  ============ 下发A7指令 ==============
 - (void)changeBodyFatScaleUnit:(ELDeviceWeightUnit)unit;
+
+
 - (void)sendCurrentUserToBle:(ELBodyFatScaleBleUserModel *)usr;
 
 -(void)sendReceivedDataResult:(BOOL)result;
@@ -150,6 +194,44 @@ MCU requests user information( MCU 请求用户信息)
 //APP下发显示项和顺序(0x10)
 - (void)readDeliverDisplayItemsTheirSequence;
 - (void)sendDeliverDisplayItemsTheirSequence:(NSMutableArray*)dataList;
+
+- (void)sendBodyFatMode;
+- (void)sendHoldBabyMode;
+- (void)sendEnableHoldBabyMode;
+
+//发用户头像名称版本(0x15)
+- (void)sendDataToAskUserIconAndNickNameWithPlayLoadData:(NSData *)data;
+
+//回复MCU: 切换用户
+- (void)replayMCUChangeUserCommand;
+
+// 7.26 增加下发语言指令
+- (void)sendToSetCurrentLanguageWithType:(NSInteger)languageType;
+
+
+// APP请求同步历史记录
+-(void)sendA7Cmd_RequestHistory;
+
+// APP A7下发同步用户 0x12
+- (void)sendCurrentA7UserToBle:(ELBodyFatScaleBleUserModel *)usr;
+
+// APP A7下发同步用户 0x13
+- (void)setCurrentA7UserToBle:(NSUInteger )usrID;
+
+-(void) sendOfflineUserListA7ToBle:(NSArray <ELBodyFatScaleBleUserModel *> *)userListArr;
+// 7.26 APP请求当前分辨率(0x30)
+- (void)sendToAskFoResolutionFromDevice;
+
+//  是否有 更新启动图片(0x02)
+- (void)sendDataToAskIsSetPic:(NSInteger)picType;
+
+- (void)sendReceivedWeightForBabyResult:(BOOL)result;
+
+//新增：0x34 APP下发当前用户列表版本
+//新增：0x34 APP下发当前用户列表版本
+-(void)sendCurrentUserListVersionWith:(NSInteger)mainUserID md5FormerFourData:(NSData *)data;
+-(void)sendCurrentUserVersion:(NSArray <ELBodyFatScaleBleUserModel *> *)userListArr;
+
 #pragma mark  ============ 下发A6指令 ==============
 
 -(void)sendOfflineUserListToBle:(NSArray <ELBodyFatScaleBleUserModel *> *)userListArr;

@@ -62,6 +62,87 @@ void main() {
     });
   });
 
+  // 验证统一通道传参及 true/false/异常的原样传播，防止把拒绝伪装成成功。
+  test('unified methods preserve channel contracts and outcomes', () async {
+    var accepted = true;
+    PlatformException? failure;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          calls.add(call);
+          if (failure != null) throw failure;
+          return call.method == 'setCommandResendCount' ? null : accepted;
+        });
+    expect(await platform.setMtu('device-a', 247), isTrue);
+    expect(
+      await platform.setPreferredPhy(remoteId: 'device-a', txPhy: 2, rxPhy: 1),
+      isTrue,
+    );
+    await platform.setCommandResendCount(3);
+    expect(await platform.setConnectPriority('device-b', 1), isTrue);
+    expect(
+      await platform.sendDataNow(
+        remoteId: 'device-b',
+        data: Uint8List.fromList([0xA6, 0]),
+        type: 'withResponse',
+      ),
+      isTrue,
+    );
+    expect(calls.map((call) => call.method), [
+      'setMtu',
+      'setPreferredPhy',
+      'setCommandResendCount',
+      'setConnectPriority',
+      'sendDataNow',
+    ]);
+    expect(calls[0].arguments, {'remoteId': 'device-a', 'mtu': 247});
+    expect(calls[1].arguments, {
+      'remoteId': 'device-a',
+      'txPhy': 2,
+      'rxPhy': 1,
+    });
+    expect(calls[2].arguments, {'resendCount': 3});
+    expect(calls[3].arguments, {'remoteId': 'device-b', 'priority': 1});
+    expect(calls[4].arguments, {
+      'remoteId': 'device-b',
+      'data': Uint8List.fromList([0xA6, 0]),
+      'type': 'withResponse',
+    });
+    accepted = false;
+    expect(await platform.setMtu('device-a', 247), isFalse);
+    expect(
+      await platform.setPreferredPhy(remoteId: 'device-a', txPhy: 2, rxPhy: 1),
+      isFalse,
+    );
+    expect(await platform.setConnectPriority('device-b', 1), isFalse);
+    expect(
+      await platform.sendDataNow(
+        remoteId: 'device-b',
+        data: Uint8List.fromList([1]),
+        type: 'withoutResponse',
+      ),
+      isFalse,
+    );
+    failure = PlatformException(code: 'permission_denied');
+    await expectLater(
+      platform.sendDataNow(
+        remoteId: 'device-b',
+        data: Uint8List.fromList([1]),
+        type: 'withoutResponse',
+      ),
+      throwsA(
+        isA<PlatformException>().having(
+          (error) => error.code,
+          'code',
+          'permission_denied',
+        ),
+      ),
+    );
+    await expectLater(
+      platform.setConnectPriority('device-b', 1),
+      throwsA(isA<PlatformException>()),
+    );
+  });
+
   test('openBluetooth uses method channel contract', () async {
     await platform.openBluetooth();
 
@@ -113,6 +194,57 @@ void main() {
     expect(calls[6].arguments['rxPhy'], ElinkAndroidPhy.phy1M.value);
     expect(calls[7].arguments['resendCount'], 3);
   });
+
+  // 默认 write 不新增通道参数；自定义 write 完整传递目标且保留原生错误。
+  test(
+    'write forwards custom UUIDs and preserves legacy channel shape',
+    () async {
+      await platform.write(
+        remoteId: 'device-a',
+        data: Uint8List.fromList([1]),
+        type: 'withoutResponse',
+      );
+      expect(calls.single.arguments, {
+        'remoteId': 'device-a',
+        'data': Uint8List.fromList([1]),
+        'type': 'withoutResponse',
+      });
+      await platform.write(
+        remoteId: 'device-b',
+        data: Uint8List.fromList([2]),
+        type: 'withResponse',
+        serviceUuid: 'FFF0',
+        characteristicUuid: 'FFF1',
+      );
+      expect(calls.last.arguments, {
+        'remoteId': 'device-b',
+        'data': Uint8List.fromList([2]),
+        'type': 'withResponse',
+        'serviceUuid': 'FFF0',
+        'characteristicUuid': 'FFF1',
+      });
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            throw PlatformException(code: 'characteristic_not_found');
+          });
+      await expectLater(
+        platform.write(
+          remoteId: 'device-b',
+          data: Uint8List.fromList([2]),
+          type: 'withResponse',
+          serviceUuid: 'FFF0',
+          characteristicUuid: 'FFF1',
+        ),
+        throwsA(
+          isA<PlatformException>().having(
+            (error) => error.code,
+            'code',
+            'characteristic_not_found',
+          ),
+        ),
+      );
+    },
+  );
 
   test('writeA6 and writeA7 use method channel contract', () async {
     await platform.writeA6(

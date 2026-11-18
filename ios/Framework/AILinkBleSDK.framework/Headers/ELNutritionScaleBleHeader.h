@@ -11,6 +11,13 @@
 
 #import "ELSDKHeader.h"
 
+/** 营养秤 A7 指令（payload[0]），新增同协议指令在此追加 */
+typedef NS_ENUM(NSUInteger, ELNutritionScaleCmd) {
+    ELNutritionScaleCmdWeight   = 0x01, // MCU 上报重量
+    ELNutritionScaleCmdSetUnit  = 0x02, // APP 切换单位
+    ELNutritionScaleCmdMakeZero = 0x04, // APP 下发归零
+    ELNutritionScaleCmdError    = 0x05, // MCU 上报异常（超载/低电）
+};
 
 typedef NS_ENUM(NSUInteger, NutritionScaleTestStatus) {
     //Real-time weight(实时重量)

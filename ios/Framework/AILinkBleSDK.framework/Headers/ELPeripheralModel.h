@@ -74,6 +74,9 @@ NS_ASSUME_NONNULL_BEGIN
 /** 广播秤的广播数据 */
 @property (nonatomic, strong) NSData *manufactureData;
 
+
+@property (nonatomic, strong) NSDictionary *advertisementData;
+
 /**
  Screening equipment（筛选设备）
 

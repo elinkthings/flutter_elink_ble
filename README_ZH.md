@@ -33,7 +33,7 @@ flutter pub add flutter_elink_ble
 
 ```yaml
 dependencies:
-  flutter_elink_ble: ^0.3.2
+  flutter_elink_ble: ^0.3.3
 ```
 
 ## Android 配置
@@ -140,7 +140,7 @@ await ElinkBle.startScan(
   timeout: const Duration(seconds: 10),
   // Android only：控制底层 ScanSettings.SCAN_MODE_*，iOS 会忽略。
   // Android only: controls ScanSettings.SCAN_MODE_*; ignored on iOS.
-  androidScanMode: ElinkAndroidScanMode.lowLatency,
+  scanMode: ElinkScanMode.lowLatency,
 );
 ```
 
@@ -162,7 +162,7 @@ flowchart TD
   J --> K[native 查询 BM 版本 0x46]
   K --> L[bmVersionEvents]
   I --> M{平台 MTU 操作}
-  M -- Android --> N[setAndroidMtu 517]
+  M -- Android --> N[setMtu 517]
   N --> O[mtuEvents]
   M -- iOS --> P[getIosMtu]
   P --> Q[withoutResponse / withResponse 最大写入长度]
@@ -183,7 +183,7 @@ flowchart TD
   `GetBMVersionPro`）。Android 原生 SDK 自动读取的是旧版 `0x0E`，所以增强版
   `0x46` 仍保留为 Flutter 显式 API；原生 SDK 自动上报的旧版 `0x0E` 结果仍会从
   `bmVersionEvents` 返回。
-- Android 使用 `ElinkBle.setAndroidMtu(remoteId, 517)`，结果从
+- Android 使用 `ElinkBle.setMtu(remoteId, 517)`，结果从
   `ElinkBle.mtuEvents` 返回。
 - iOS 使用 `ElinkBle.getIosMtu(remoteId)`，读取系统当前协商出的
   `.withoutResponse` 和 `.withResponse` 最大写入长度。
@@ -204,7 +204,7 @@ final bmVersionSub = ElinkBle.bmVersionEvents.listen((event) {
 });
 ```
 
-<p><font color="red"><strong>Android 注意：</strong>部分 Android BLE 模块需要先完成 GATT MTU 协商，BM 版本查询才会返回结果。若调用 <code>ElinkBle.getBmVersion()</code> 后没有收到 <code>bmVersionEvents</code>，建议在连接和服务发现完成后先调用 <code>ElinkBle.setAndroidMtu(remoteId, 517)</code>，收到 <code>ElinkBle.mtuEvents</code> 后再查询 BM 版本。</font></p>
+<p><font color="red"><strong>Android 注意：</strong>部分 Android BLE 模块需要先完成 GATT MTU 协商，BM 版本查询才会返回结果。若调用 <code>ElinkBle.getBmVersion()</code> 后没有收到 <code>bmVersionEvents</code>，建议在连接和服务发现完成后先调用 <code>ElinkBle.setMtu(remoteId, 517)</code>，收到 <code>ElinkBle.mtuEvents</code> 后再查询 BM 版本。</font></p>
 
 <p><font color="red"><strong>连接注意：</strong>部分模块刚启动时广播里的 <code>CID/VID/PID</code> 会短暂保持启动默认值 <code>0/0/0</code>。不要用这类扫描结果立即连接；应继续扫描，等最新 <code>result.advertisementData.identity</code> 中的 <code>CID</code>、<code>VID</code>、<code>PID</code> 变为目标产品的真实值后，再使用该扫描结果发起连接。</font></p>
 
@@ -233,14 +233,12 @@ await ElinkBle.write(
 // Read RSSI for a connected device; result is emitted by ElinkBle.rssiEvents.
 await ElinkBle.readRssi(result.device.remoteId);
 
-// Android only：请求 GATT MTU，结果从 ElinkBle.mtuEvents 返回。
-// Android only: request GATT MTU. Result is emitted by ElinkBle.mtuEvents.
-await ElinkBle.setAndroidMtu(result.device.remoteId, 247);
+// 请求 GATT MTU；iOS 返回 false，Android 协商结果从 ElinkBle.mtuEvents 返回。
+await ElinkBle.setMtu(result.device.remoteId, 247);
 
-// Android only：指令重发默认关闭，0 会重新关闭。
-// Android only: command resend is disabled by default; 0 disables it again.
-await ElinkBle.setAndroidCommandResendCount(resendCount: 3);
-await ElinkBle.setAndroidCommandResendCount();
+// 指令重发默认关闭，0 会重新关闭；iOS 忽略此配置。
+await ElinkBle.setCommandResendCount(resendCount: 3);
+await ElinkBle.setCommandResendCount();
 
 // iOS only：查询目标连接下 CoreBluetooth 最大写入长度。
 // iOS only: read CoreBluetooth maximum write lengths for the target connection.
@@ -251,18 +249,60 @@ print(
   'withResponse=${iosMtu.maxWriteWithResponse}',
 );
 
-// Android only：设置 preferred PHY。
-// Android only: set preferred PHY.
-await ElinkBle.setAndroidPreferredPhy(
+// 设置首选 PHY；iOS 或不支持的 Android 版本返回 false。
+await ElinkBle.setPreferredPhy(
   result.device.remoteId,
-  txPhy: ElinkAndroidPhy.phy2M,
-  rxPhy: ElinkAndroidPhy.phy2M,
+  txPhy: ElinkPhy.phy2M,
+  rxPhy: ElinkPhy.phy2M,
+);
+
+// 即时发送完整数据包，并请求连接优先级。
+final submitted = await ElinkBle.sendDataNow(
+  result.device.remoteId,
+  ElinkDataProcessor.wrapA6Frame([0x01, 0x02]),
+);
+final priorityRequested = await ElinkBle.setConnectPriority(
+  result.device.remoteId,
+  ElinkConnectionPriority.high,
 );
 
 // 断开指定设备。
-// Disconnect a target device.
 await ElinkBle.disconnect(result.device.remoteId);
 ```
+
+统一接口无需业务层判断平台：iOS 对 `setMtu`、`setPreferredPhy` 和
+`setConnectPriority` 不执行操作并返回 `false`，忽略重发次数及扫描模式。
+旧 Android 命名接口保留原有契约；`ElinkPhy`、`ElinkScanMode` 是旧枚举的类型别名。
+`startScan` 同时传入 `scanMode` 和旧 `androidScanMode` 时，两者必须一致。
+
+`write` 支持成对指定 `serviceUuid` 和 `characteristicUuid`，可使用 16/32/128-bit
+UUID；不传时保留原有 Elink 写入路径。
+
+```dart
+await ElinkBle.write(
+  remoteId,
+  [0x01, 0x02],
+  serviceUuid: const ElinkGuid('FFF0'),
+  characteristicUuid: const ElinkGuid('FFF1'),
+  type: ElinkWriteType.withResponse,
+);
+```
+
+目标必须是当前连接已发现的可写特征，缺失或不可写时返回错误，不额外组包。
+Android 仍使用 SDK 队列，实际写入类型由 SDK 按特征属性选择（优先无响应）；
+SDK 缓存无法区分跨服务重复的特征 UUID，因此会拒绝这种目标，避免误写。
+iOS 使用当前 session 的 peripheral 按 `type` 直接写入；类型不支持、数据超过
+单次最大长度、无响应写入容量不足时返回错误。完成仅表示提交，不代表设备已收包。
+该能力不扩展任意设备的连接流程，也不自动订阅自定义特征通知。
+
+`sendDataNow` 接受完整包，不额外封装 A6/A7，空包返回 `false`。
+Android 返回 SDK 接受结果，握手未成功时返回 `false`；iOS 使用目标 session 的
+`sendDirectCmd`，由 SDK 按包头和特征属性选择特征及写入方式，忽略 `type`。
+返回 `true` 仅表示已提交 SDK，不代表设备已收包；权限、连接等错误仍正常传播。
+
+Android 原生库版本为 `1.15.19`。内置 iOS 静态 framework 从 `1.13.0` 标签
+（提交 `7fbb80e65de605c2beb7cb90077f7a7153d65a10`）独立构建，使用 Release、arm64
+真机架构及 iOS 13.0 部署目标，完整保留 SDK 头文件、模块和隐私资源，不含模拟器架构。
 
 WiFi 配网：
 

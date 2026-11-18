@@ -172,6 +172,16 @@ NS_ASSUME_NONNULL_BEGIN
  */
 -(void)bluetoothManagerReceiveBMVersion:(NSString *_Nonnull)bmVersion;
 
+
+/**
+ Query the callback of the software and hardware version number of the BM module with cmd type（查询BM模块软硬件版本号的回调，包含指令类型）
+ 
+ @param bmVersion BM module software and hardware version
+ @param cmdType (指令类型）
+ */
+-(void)bluetoothManagerReceiveBMVersion:(NSString *_Nonnull)bmVersion
+                             cmdType:(NSUInteger)cmdType;
+
 /**
  Query the callback of the MCU software and hardware version number（查询MCU软硬件版本号的回调）
  

@@ -92,6 +92,59 @@ class MethodChannelFlutterElinkBle extends FlutterElinkBlePlatform {
     });
   }
 
+  /// 通过统一通道请求 MTU，平台不支持时返回 false。
+  @override
+  Future<bool> setMtu(String remoteId, int mtu) async {
+    return (await methodChannel.invokeMethod<bool>('setMtu', <String, Object?>{
+      'remoteId': remoteId,
+      'mtu': mtu,
+    }))!;
+  }
+
+  /// 通过统一通道请求首选 PHY，平台不支持时返回 false。
+  @override
+  Future<bool> setPreferredPhy({
+    required String remoteId,
+    required int txPhy,
+    required int rxPhy,
+  }) async {
+    return (await methodChannel.invokeMethod<bool>(
+      'setPreferredPhy',
+      <String, Object?>{'remoteId': remoteId, 'txPhy': txPhy, 'rxPhy': rxPhy},
+    ))!;
+  }
+
+  /// 通过统一通道配置重发次数，不支持的平台正常完成。
+  @override
+  Future<void> setCommandResendCount(int resendCount) {
+    return methodChannel.invokeMethod<void>(
+      'setCommandResendCount',
+      <String, Object?>{'resendCount': resendCount},
+    );
+  }
+
+  /// 请求原生设置连接优先级，原样返回接受结果。
+  @override
+  Future<bool> setConnectPriority(String remoteId, int priority) async {
+    return (await methodChannel.invokeMethod<bool>(
+      'setConnectPriority',
+      <String, Object?>{'remoteId': remoteId, 'priority': priority},
+    ))!;
+  }
+
+  /// 将完整数据包提交原生即时发送，原样返回提交结果。
+  @override
+  Future<bool> sendDataNow({
+    required String remoteId,
+    required Uint8List data,
+    required String type,
+  }) async {
+    return (await methodChannel.invokeMethod<bool>(
+      'sendDataNow',
+      <String, Object?>{'remoteId': remoteId, 'data': data, 'type': type},
+    ))!;
+  }
+
   @override
   Future<bool> setAndroidMtu(String remoteId, int mtu) async {
     return await methodChannel.invokeMethod<bool>(
@@ -143,16 +196,21 @@ class MethodChannelFlutterElinkBle extends FlutterElinkBlePlatform {
     );
   }
 
+  /// 转发完整数据和可选目标 UUID；默认调用保持原有通道参数结构。
   @override
   Future<void> write({
     required String remoteId,
     required Uint8List data,
     required String type,
+    String? serviceUuid,
+    String? characteristicUuid,
   }) {
     return methodChannel.invokeMethod<void>('write', <String, Object?>{
       'remoteId': remoteId,
       'data': data,
       'type': type,
+      'serviceUuid': ?serviceUuid,
+      'characteristicUuid': ?characteristicUuid,
     });
   }
 

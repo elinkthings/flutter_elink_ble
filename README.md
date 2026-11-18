@@ -4,10 +4,10 @@
 
 Flutter plugin for the ElinkThings BLE SDK. The Dart API exposes Bluetooth adapter state, scanning, connection lifecycle, protocol data callbacks, characteristic events, Elink protocol helpers, and Dart-side WiFi provisioning helpers.
 
-Native code delegates scan, connect, disconnect, and write operations to the official Elink SDK:
+Native code delegates scan, connect, disconnect, and default Elink writes to the official Elink SDK. Custom UUID writes use the SDK queue on Android and the connected peripheral on iOS:
 
-- Android: `AILinkBleManager` from `AILinkSDKRepositoryAndroid`
-- iOS: `ELAILinkBleManager` from `AILinkBleSDK.framework`
+- Android: `AILinkBleManager` from `AILinkSDKRepositoryAndroid` `1.15.19`
+- iOS: `ELAILinkBleManager` from `AILinkBleSDK.framework` `1.13.0`
 
 WiFi provisioning commands are built in Dart and sent through the shared `writeA6` path, so Android and iOS use the same command payloads and response parsing.
 
@@ -42,7 +42,7 @@ Or add it manually to `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  flutter_elink_ble: ^0.3.2
+  flutter_elink_ble: ^0.3.3
 ```
 
 ## Android Setup
@@ -147,7 +147,7 @@ final scanSub = ElinkBle.scanResults.listen((results) {
 
 await ElinkBle.startScan(
   timeout: const Duration(seconds: 10),
-  androidScanMode: ElinkAndroidScanMode.lowLatency, // Android only.
+  scanMode: ElinkScanMode.lowLatency, // Ignored on iOS.
 );
 ```
 
@@ -170,7 +170,7 @@ flowchart TD
   J --> K[native get BM version 0x46]
   K --> L[bmVersionEvents]
   I --> M{Platform MTU action}
-  M -- Android --> N[setAndroidMtu 517]
+  M -- Android --> N[setMtu 517]
   N --> O[mtuEvents]
   M -- iOS --> P[getIosMtu]
   P --> Q[withoutResponse / withResponse lengths]
@@ -194,7 +194,7 @@ In the example implementation:
   `0x0E` version, so the enhanced `0x46` query remains an explicit Flutter API.
   Native legacy `0x0E` reports are still bridged through `bmVersionEvents` when
   the native SDK emits them.
-- Android uses `ElinkBle.setAndroidMtu(remoteId, 517)` and listens to
+- Android uses `ElinkBle.setMtu(remoteId, 517)` and listens to
   `ElinkBle.mtuEvents`.
 - iOS uses `ElinkBle.getIosMtu(remoteId)` and reads the negotiated
   `.withoutResponse` and `.withResponse` maximum write lengths.
@@ -215,7 +215,7 @@ final bmVersionSub = ElinkBle.bmVersionEvents.listen((event) {
 });
 ```
 
-<p><font color="red"><strong>Android note:</strong> Some Android BLE modules only return the BM version after the GATT MTU has been negotiated. If <code>bmVersionEvents</code> is not emitted after <code>ElinkBle.getBmVersion()</code>, call <code>ElinkBle.setAndroidMtu(remoteId, 517)</code> after connection/service discovery, wait for <code>ElinkBle.mtuEvents</code>, then query the BM version again.</font></p>
+<p><font color="red"><strong>Android note:</strong> Some Android BLE modules only return the BM version after the GATT MTU has been negotiated. If <code>bmVersionEvents</code> is not emitted after <code>ElinkBle.getBmVersion()</code>, call <code>ElinkBle.setMtu(remoteId, 517)</code> after connection/service discovery, wait for <code>ElinkBle.mtuEvents</code>, then query the BM version again.</font></p>
 
 <p><font color="red"><strong>Connection note:</strong> Some modules advertise the boot default <code>CID/VID/PID = 0/0/0</code> for a short time after power-on. Do not connect from that scan result. Keep scanning and wait until <code>result.advertisementData.identity</code> contains the real <code>CID</code>, <code>VID</code>, and <code>PID</code> for the target product, then connect with that updated scan result.</font></p>
 
@@ -236,12 +236,12 @@ await ElinkBle.write(
 
 await ElinkBle.readRssi(result.device.remoteId);
 
-// Android only: request GATT MTU. Result is emitted by ElinkBle.mtuEvents.
-await ElinkBle.setAndroidMtu(result.device.remoteId, 247);
+// Request GATT MTU; iOS returns false. Android results use ElinkBle.mtuEvents.
+await ElinkBle.setMtu(result.device.remoteId, 247);
 
-// Android only: command resend is disabled by default; 0 disables it again.
-await ElinkBle.setAndroidCommandResendCount(resendCount: 3);
-await ElinkBle.setAndroidCommandResendCount();
+// Command resend is disabled by default; 0 disables it again. iOS ignores it.
+await ElinkBle.setCommandResendCount(resendCount: 3);
+await ElinkBle.setCommandResendCount();
 
 // iOS only: read CoreBluetooth maximum write lengths for the target connection.
 final iosMtu = await ElinkBle.getIosMtu(result.device.remoteId);
@@ -251,15 +251,65 @@ print(
   'withResponse=${iosMtu.maxWriteWithResponse}',
 );
 
-// Android only: set preferred PHY.
-await ElinkBle.setAndroidPreferredPhy(
+// Request preferred PHY; iOS and unsupported Android versions return false.
+await ElinkBle.setPreferredPhy(
   result.device.remoteId,
-  txPhy: ElinkAndroidPhy.phy2M,
-  rxPhy: ElinkAndroidPhy.phy2M,
+  txPhy: ElinkPhy.phy2M,
+  rxPhy: ElinkPhy.phy2M,
+);
+
+final submitted = await ElinkBle.sendDataNow(
+  result.device.remoteId,
+  ElinkDataProcessor.wrapA6Frame([0x01, 0x02]),
+);
+final priorityRequested = await ElinkBle.setConnectPriority(
+  result.device.remoteId,
+  ElinkConnectionPriority.high,
 );
 
 await ElinkBle.disconnect(result.device.remoteId);
 ```
+
+`write` also accepts paired `serviceUuid` and `characteristicUuid` parameters.
+Omit both to retain the default Elink path. UUIDs support 16, 32 and 128-bit forms.
+
+```dart
+await ElinkBle.write(
+  remoteId,
+  [0x01, 0x02],
+  serviceUuid: const ElinkGuid('FFF0'),
+  characteristicUuid: const ElinkGuid('FFF1'),
+  type: ElinkWriteType.withResponse,
+);
+```
+
+The target must already be discovered on the connected device; missing or
+non-writable targets are rejected. Android queues the unchanged bytes through
+the SDK, which selects the actual write type from characteristic properties
+(preferring no response). Its UUID cache cannot distinguish duplicate
+characteristic UUIDs across services, so such targets are rejected to avoid
+misrouting. iOS writes directly through the current session's peripheral using
+`type`; unsupported types, oversized packets and unavailable no-response
+capacity return errors. Completion means submission, not device receipt.
+This does not add arbitrary-device connection or notification subscription.
+
+`sendDataNow` accepts a complete packet without adding A6/A7 framing. Android
+returns the SDK acceptance result (false when the handshake is not ready).
+iOS calls the target session's `sendDirectCmd`; the SDK selects the characteristic
+and write mode from the packet and characteristic properties, ignoring `type`.
+Empty packets return false. A true result means the request was submitted, not
+that the device received it. Permission and connection errors still propagate.
+
+The unified configuration methods need no platform checks: iOS returns false for
+`setMtu`, `setPreferredPhy`, and `setConnectPriority`, and ignores resend count
+and scan mode. Existing Android-named APIs retain their original behavior.
+`ElinkPhy` and `ElinkScanMode` are aliases of the existing enum types. If both
+`scanMode` and legacy `androidScanMode` are supplied, their values must match.
+
+The bundled iOS static framework was built from SDK tag `1.13.0`, commit
+`7fbb80e65de605c2beb7cb90077f7a7153d65a10`, in Release mode for arm64 devices,
+with an iOS 13.0 deployment target. It retains the SDK headers, module and
+privacy bundle; simulator slices are not included.
 
 ## WiFi Provisioning
 

@@ -9,6 +9,6 @@
 #define AILinkBleSDK_Version_h
 
 //版本号 SDK Version
-#define AiLinkBleSDKVersion @"1.11.0" // 20250305
+#define AiLinkBleSDKVersion @"1.13.0" // 20261023
 
 #endif /* AILinkBleSDK_Version_h */

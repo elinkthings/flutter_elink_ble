@@ -113,6 +113,56 @@ final class ElinkIosDeviceSession: NSObject, ELAILinkBleManagerDelegate {
     manager.sendCmd(data)
   }
 
+  /// 向当前 session 的自定义特征提交原始数据，不修改 SDK 默认队列或写入配置。
+  func writeCustom(
+    _ data: Data,
+    serviceUuid: String,
+    characteristicUuid: String,
+    type: String
+  ) -> FlutterError? {
+    guard !invalidated, !disconnecting, connectionReady,
+      let peripheral = manager.currentAILinkPeripheral()?.peripheral,
+      peripheral.state == .connected
+    else {
+      return FlutterError(code: "device_not_connected", message: "Device is not connected: \(remoteId)", details: nil)
+    }
+    ElinkNativeLogger.debug("session writeCustom remoteId=\(remoteId) service=\(serviceUuid) characteristic=\(characteristicUuid) bytes=\(data.count)")
+    return ElinkIosCustomWrite.write(
+      data, peripheral: peripheral, serviceUuid: serviceUuid,
+      characteristicUuid: characteristicUuid, type: type
+    )
+  }
+
+  /// 直接发送完整包，先核对目标连接和 SDK 对应特征；true 仅表示已提交 SDK。
+  /// SDK 根据包头和特征属性决定写入方式，不修改队列或全局写入类型配置。
+  func sendDataNow(_ data: Data) -> Bool {
+    guard !data.isEmpty, !invalidated, !disconnecting, connectionReady,
+      let peripheral = manager.currentAILinkPeripheral()?.peripheral,
+      peripheral.state == .connected
+    else { return false }
+    let characteristics = (peripheral.services ?? []).flatMap { $0.characteristics ?? [] }
+    guard Self.hasImmediateWriteCharacteristic(data, characteristics: characteristics) else {
+      return false
+    }
+    ElinkNativeLogger.debug("session sendDataNow remoteId=\(remoteId) sessionId=\(sessionId) bytes=\(data.count)")
+    manager.sendDirectCmd(data)
+    return true
+  }
+
+  /// 按 SDK 的 A6/其他包路由检查可写特征，避免 SDK 静默忽略后报告已提交。
+  static func hasImmediateWriteCharacteristic(
+    _ data: Data,
+    characteristics: [CBCharacteristic]
+  ) -> Bool {
+    guard let head = data.first else { return false }
+    return characteristics.contains { characteristic in
+      let matches = head == 0xA6
+        ? characteristic.uuid.uuidString.contains("FFE3")
+        : characteristic.uuid == CBUUID(string: "FFE1")
+      return matches && !characteristic.properties.intersection([.write, .writeWithoutResponse]).isEmpty
+    }
+  }
+
   /// 向当前 session 发送 A6 payload。
   func writeA6(_ payload: Data) {
     ElinkNativeLogger.debug("session writeA6 remoteId=\(remoteId) sessionId=\(sessionId) bytes=\(payload.count)")

@@ -262,6 +262,7 @@ class ElinkBle {
 
   /// 开始 BLE scan。默认扫描 Elink 广播设备 `F0A0` 与连接设备 `FFE0`。
   /// Start BLE scan. Defaults to Elink broadcast service `F0A0` and connect service `FFE0`.
+  /// [scanMode] 在 iOS 上忽略；与兼容参数 [androidScanMode] 同时传入时必须相同。
   static Future<void> startScan({
     Duration timeout = const Duration(seconds: 10),
     List<ElinkGuid> withServices = const <ElinkGuid>[
@@ -269,9 +270,16 @@ class ElinkBle {
       ElinkGuid.connectDevice,
     ],
     ElinkAndroidScanMode? androidScanMode,
+    ElinkScanMode? scanMode,
   }) async {
+    if (scanMode != null &&
+        androidScanMode != null &&
+        scanMode != androidScanMode) {
+      throw ArgumentError('scanMode and androidScanMode must match');
+    }
+    final effectiveScanMode = scanMode ?? androidScanMode;
     _ensureListening();
-    final scanSignature = _scanSignature(withServices, androidScanMode);
+    final scanSignature = _scanSignature(withServices, effectiveScanMode);
     if (_isScanningNow && _activeScanSignature == scanSignature) {
       return;
     }
@@ -283,7 +291,7 @@ class ElinkBle {
       await _platform.startScan(
         timeoutMs: timeout.inMilliseconds,
         withServices: withServices.map((guid) => guid.value).toList(),
-        androidScanMode: androidScanMode?.value,
+        androidScanMode: effectiveScanMode?.value,
       );
     } catch (_) {
       _setScanning(false);
@@ -329,6 +337,63 @@ class ElinkBle {
   static Future<void> readRssi(String remoteId) {
     _ensureListening();
     return _platform.readRssi(remoteId);
+  }
+
+  /// 请求目标设备的 MTU；iOS 不执行操作并返回 false。
+  /// 返回值表示请求是否被接受，协商结果通过 [mtuEvents] 返回。
+  static Future<bool> setMtu(String remoteId, int mtu) {
+    _ensureListening();
+    return _platform.setMtu(remoteId, mtu);
+  }
+
+  /// 设置首选 PHY；iOS 和不支持的 Android 版本返回 false。
+  static Future<bool> setPreferredPhy(
+    String remoteId, {
+    required ElinkPhy txPhy,
+    required ElinkPhy rxPhy,
+  }) {
+    _ensureListening();
+    return _platform.setPreferredPhy(
+      remoteId: remoteId,
+      txPhy: txPhy.value,
+      rxPhy: rxPhy.value,
+    );
+  }
+
+  /// 设置发送失败重发次数，0 关闭，负数保留原配置；iOS 忽略此配置。
+  static Future<void> setCommandResendCount({int resendCount = 0}) {
+    _ensureListening();
+    return _platform.setCommandResendCount(resendCount);
+  }
+
+  /// 请求连接优先级；iOS 不执行操作并返回 false。
+  /// true 仅表示原生接受请求，不代表连接参数已生效。
+  static Future<bool> setConnectPriority(
+    String remoteId,
+    ElinkConnectionPriority priority,
+  ) {
+    _ensureListening();
+    return _platform.setConnectPriority(remoteId, priority.value);
+  }
+
+  /// 即时发送完整数据包，空数据返回 false；不会额外封装 A6/A7。
+  /// Android 返回 SDK 接受结果，握手未成功时返回 false。
+  /// Android 的 [type] 仅选择 FFE1（withResponse）或 FFE3（withoutResponse）；
+  /// 实际 ATT 写入类型由 SDK 按特征属性决定，支持无应答时优先无应答。
+  /// iOS 直接提交给目标连接的 SDK，由 SDK 选择特征及写入方式，忽略 [type]。
+  /// true 仅表示已提交请求，不表示设备已收包；连接、权限等错误继续抛出。
+  static Future<bool> sendDataNow(
+    String remoteId,
+    List<int> data, {
+    ElinkWriteType type = ElinkWriteType.withoutResponse,
+  }) {
+    if (data.isEmpty) return Future<bool>.value(false);
+    _ensureListening();
+    return _platform.sendDataNow(
+      remoteId: remoteId,
+      data: Uint8List.fromList(data),
+      type: type.name,
+    );
   }
 
   /// Android only: request GATT MTU. iOS 不支持主动设置 MTU。
@@ -378,16 +443,58 @@ class ElinkBle {
 
   /// 写入 Elink packet 到设备 characteristic。
   /// Write a full Elink packet to the device characteristic.
+  /// 可成对传入 [serviceUuid]、[characteristicUuid] 指定已发现的可写特征，支持
+  /// 16/32/128-bit UUID；不传时保留原有 Elink SDK 写入路径，不额外组包。
+  /// 默认路径：Android 用 [type] 选择 FFE1（withResponse）或 FFE3（withoutResponse），
+  /// 实际 ATT 写入类型由 SDK 按特征属性决定；iOS 忽略 [type]，由 SDK 决定。
+  /// 自定义 UUID 路径：Android 忽略 [type]，按特征属性选择（支持无应答时优先）；
+  /// iOS 按 [type] 指定实际 ATT 写入类型，不支持时返回错误。
+  /// 完成仅表示已提交写入，不代表设备已收包。
   static Future<void> write(
     String remoteId,
     List<int> data, {
     ElinkWriteType type = ElinkWriteType.withoutResponse,
+    ElinkGuid? serviceUuid,
+    ElinkGuid? characteristicUuid,
   }) {
+    if ((serviceUuid == null) != (characteristicUuid == null)) {
+      throw ArgumentError(
+        'serviceUuid and characteristicUuid must be provided together',
+      );
+    }
+    final service = serviceUuid == null ? null : _writeUuid(serviceUuid);
+    final characteristic = characteristicUuid == null
+        ? null
+        : _writeUuid(characteristicUuid);
     _ensureListening();
     return _platform.write(
       remoteId: remoteId,
       data: Uint8List.fromList(data),
       type: type.name,
+      serviceUuid: service,
+      characteristicUuid: characteristic,
+    );
+  }
+
+  /// 校验自定义写入 UUID 并展开蓝牙短 UUID，避免原生解析失败或匹配歧义。
+  static String _writeUuid(ElinkGuid uuid) {
+    final value = uuid.value;
+    if (value.length == 4 && RegExp(r'^[0-9a-fA-F]{4}$').hasMatch(value)) {
+      return '0000${value.toLowerCase()}-0000-1000-8000-00805f9b34fb';
+    }
+    if (value.length == 8 && RegExp(r'^[0-9a-fA-F]{8}$').hasMatch(value)) {
+      return '${value.toLowerCase()}-0000-1000-8000-00805f9b34fb';
+    }
+    if (value.length == 36 &&
+        RegExp(
+          r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
+        ).hasMatch(value)) {
+      return value.toLowerCase();
+    }
+    throw ArgumentError.value(
+      value,
+      'uuid',
+      'Expected a 16, 32 or 128-bit UUID',
     );
   }
 

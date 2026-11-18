@@ -117,6 +117,9 @@ typedef NS_ENUM(NSUInteger, EightScale_MCU_HeadType) {
     /** 发送体脂数据 */
     EightScale_MCU_HeadType_ReportBodyFatData   = 0x09 ,
     
+    /** 请求用户信息(新格式) */
+    EightScale_MCU_HeadType_New_RequestUserData     = 0x0A ,
+    
     /** 发送请求补全体脂数据 */
     EightScale_MCU_HeadType_CompletionBodyFatData    = 0x0E ,
     
@@ -134,8 +137,12 @@ typedef NS_ENUM(NSUInteger, EightScale_MCU_HeadType) {
     /** 设备上发错误码 */
     EightScale_MCU_HeadType_ReportErrorCode     = 0xFF ,
     
- 
-    
+    /** APP获取MCU支持的功能 */
+    EightScale_MCU_SupportFunction     = 0x29 ,
+    /** MCU回复回复支持的功能 */
+    EightScale_MCU_Report_SupportFunction     = 0x2A ,
+    /** Type：秤专用交互 */
+    EightScale_MCU_Interactive_Command     = 0x2B ,
 };
 
 //Character(角色) 同四电极体脂秤枚举
@@ -172,5 +179,36 @@ typedef NS_ENUM(NSUInteger, DualBandEightScaleAdcMeasureStatus) {
     DualBandEightScaleAdcMeasureStatus_Fail          = 0x06,//测阻抗失败
     DualBandEightScaleAdcMeasureStatus_SuccessCustom = 0x07,//The impedance measurement is successful, and the APP algorithm is used. The APP will identify the corresponding algorithm according to VID and PID(测阻抗成功，并使用 APP 算法，APP 会根据 VID,PID 来识 别对应算法)
 };
+
+
+///app下发交互指令操作枚举定义
+typedef NS_ENUM(NSUInteger, EightScaleInteractiveCommandType) {
+    /** 二级指令：APP更新用户列表给BM模块 */
+    EightScaleInteractiveCommand_updateUserList           = 0x01,
+    /** 二级指令：APP更新用户列表完成 */
+    EightScaleInteractiveCommand_updateUserList_Finished  = 0x02,
+    /** 二级指令：APP更新个人用户给BM模块 */
+    EightScaleInteractiveCommand_UpdatePersonalInfo            = 0x03,
+    /** 二级指令：BM回复更新状态 */
+    EightScaleInteractiveCommand_UpdatePersonalInfo_Status     = 0x04,
+    /** 二级指令：APP请求同步历史记录 */
+    EightScaleInteractiveCommand_Request_Sync_History          = 0x05,
+    /** 二级指令：历史记录数据(mcu算法) */
+    EightScaleInteractiveCommand_MCUAlgorithm_History_Data     = 0x06,
+    /** 二级指令：历史记录数据(App算法) */
+    EightScaleInteractiveCommand_APPAlgorithm_History_Data     = 0x07,
+};
+
+
+///BM回复历史记录情况
+typedef NS_ENUM(NSUInteger, EightScaleHistoryRecordCodeType) {
+    /** 无历史记录 */
+    EightScaleHistoryRecordCodeType_NO_Record  = 0x00,
+    /** 开始发送历史记录 */
+    EightScaleHistoryRecordCodeType_StartSend_Record  = 0x01,
+    /** 结束发送历史记录 */
+    EightScaleHistoryRecordCodeType_EndSend_Record  = 0x02,
+} ;
+
 
 #endif /* ELEightScaleSDKHeader_h */

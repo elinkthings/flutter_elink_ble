@@ -178,15 +178,18 @@ String? _blankToNull(String? value) {
   return normalized == null || normalized.isEmpty ? null : normalized;
 }
 
-/// 写入类型。
-/// GATT write type.
+/// ATT 层的写入应答语义，不表示是否等待设备业务回包或 Dart Future 的完成时机。
+/// SDK 写入路径不保证强制使用该类型，具体生效范围见 `write` / `sendDataNow`。
+/// ATT write response semantics, not application-protocol replies or Future completion.
 enum ElinkWriteType {
-  /// 写入后等待 GATT response。
-  /// Write with a GATT response.
+  /// 有应答写入：对端返回 ATT 写入响应或错误响应，确认属性写入结果。
+  /// 该应答不代表设备已完成业务指令。
+  /// Write with an ATT response; it does not confirm business-command completion.
   withResponse,
 
-  /// 写入后不等待 GATT response。
-  /// Write without a GATT response.
+  /// 无应答写入：对端不为该写命令返回 ATT 写入响应或错误响应。
+  /// 设备仍可通过独立的 notify / indicate 返回业务数据。
+  /// Write without an ATT response; notifications and indications are independent.
   withoutResponse,
 }
 
@@ -228,6 +231,30 @@ enum ElinkAndroidPhy {
 
   const ElinkAndroidPhy(this.value);
 
+  final int value;
+}
+
+/// 扫描模式的统一名称；iOS 忽略模式，旧类型名称继续兼容。
+typedef ElinkScanMode = ElinkAndroidScanMode;
+
+/// 首选 PHY 的统一名称；不支持主动配置的平台返回 false。
+typedef ElinkPhy = ElinkAndroidPhy;
+
+/// 连接优先级；不支持主动配置的平台忽略请求并返回 false。
+enum ElinkConnectionPriority {
+  /// 平衡功耗与传输速度。
+  balanced(0),
+
+  /// 优先传输速度。
+  high(1),
+
+  /// 优先降低功耗。
+  lowPower(2);
+
+  /// 创建与原生连接优先级数值对应的选项。
+  const ElinkConnectionPriority(this.value);
+
+  /// 原生连接优先级数值。
   final int value;
 }
 

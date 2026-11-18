@@ -60,8 +60,12 @@ NS_ASSUME_NONNULL_BEGIN
 /** 返回设备采样频率和保存频率 */
 - (void)hygrothermographManagerReturnSamplingFrequency:(NSInteger)sampling saveFrequency:(NSInteger)save timeInterval:(NSInteger)timeInterval;
 
-/** 返回温湿度校准值 */
-- (void)hygrothermographManagerReturnCalibrationValueWithTem:(float)tem hum:(float)hum;
+/** 返回温湿度校准值
+* @param celsiusCalibrationValue : 温度偏置,单位摄氏度
+* @param fahrenheitCalibrationValue : 温度偏置,单位华氏度
+* @param humCalibrationValue : 湿度偏置
+*/
+- (void)hygrothermographManagerReturnCalibrationValueWithCelsiusTem:(float)celsiusCalibrationValue fahrenheitTem:(float)fahrenheitCalibrationValue hum:(float)humCalibrationValue;
 
 /** 返回设备信息 */
 - (void)hygrothermographManagerReturnDevType:(enum Hygrothermograph_DevType)type version:(NSString *)version IMEI:(NSString *)IMEI;

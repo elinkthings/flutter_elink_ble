@@ -101,14 +101,20 @@ static NSString *GET_A7_DECRYPT_BLE_PAYLOAD_DATA_CONTENT = @"GET_A7_DECRYPT_BLE_
  */
 -(void)syncBleNowDate:(BOOL)enable;
 
-///仅WIFI秤调用，同步世界时间(0时区)到wifi-ble模块
--(void)syncBleGMTNowDate:(BOOL)enable;
+///仅WIFI秤调用，同步世界时间(0时区)到wifi-ble模块 //useUTCTimezone是否使用0时区时间
+-(void)syncBleGMTNowDate:(BOOL)enable useUTCTimezone:(BOOL)useUTCTimezone;
 
 ///同步手机本地时间给mcu，每次连接成功后会自动调用
 -(void)syncMCUNowDate;
 
 
 #pragma mark  ============ 发送指令的3种方法 ==============
+/**
+ Shortcut method to send A5 data to BLE(发送A6数据给BLE的快捷方法)
+ @param data The stitched payload part(拼接好的payload部分)
+ */
+- (void)sendCmdToMCUWithA5PayloadData:(NSData *_Nonnull)data deviceType:(ELSupportDeviceType)type;
+
 /**
  Shortcut method to send A6 data to BLE(发送A6数据给BLE的快捷方法)
  @param data The stitched payload part(拼接好的payload部分)
@@ -125,12 +131,16 @@ static NSString *GET_A7_DECRYPT_BLE_PAYLOAD_DATA_CONTENT = @"GET_A7_DECRYPT_BLE_
 /// 直接发送A7命令，不加载在队列中
 -(void)immediatelySendCmdToMCUWithA7PayloadData:(NSData *)data deviceType:(ELSupportDeviceType)type;
 
+-(void)immediatelySendCmdToMCUWithA5PayloadData:(NSData *)data deviceType:(ELSupportDeviceType)type;
 /**
  General method of sending data (support data transparent transmission)(发送数据通用方法（支持数据透传）)
  
  @param data 数据
  */
 -(void)sendData:(NSData *)data;
+
+//直接发送命令，不加载在队列中 特定情况使用
+- (void)immediatelySendCmdToMCUWithPayloadData:(NSData *)data;
 
 //恢复出厂设置
 - (void)setFactoryDataReset;

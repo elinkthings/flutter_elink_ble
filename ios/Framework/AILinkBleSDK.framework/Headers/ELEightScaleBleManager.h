@@ -67,6 +67,8 @@ NS_ASSUME_NONNULL_BEGIN
 
 ///MCU请求用户信息
 - (void)eightScaleBleGetUserData;
+//新格式
+- (void)eightScaleBleNewGetUserData;
 
 ///MCU返回设备测量信息(测量完成的时候才会回调该方法)
 - (void)eightScaleBleReportTestData:(ELEightScaleBleDataModel *)dataModle bfrData:(ELEightScaleBleBfrDataModel *)bfrDataModle;
@@ -91,6 +93,46 @@ NS_ASSUME_NONNULL_BEGIN
  @param status 阻抗测量状态
  */
 -(void)eightScaleScaleManagerCallBackAdcMeasureStatus:(DualBandEightScaleAdcMeasureStatus)status;
+
+
+/**
+ MCU回复回复支持的功能
+ @param offlineRecordValue 离线记录
+ @param modeValue 用户模式
+ */
+- (void)eightScaleMCUReportSupportFunction:(NSInteger)offlineRecordValue mode:(NSInteger)modeValue;
+
+
+/**
+ BM回复更新状态
+ @param status
+ 00：更新列表成功
+ 01：更新个人用户成功
+ 02：更新列表失败
+ 03：更新个人用户失败
+ */
+- (void)updateBMReplyStatus:(NSInteger)status;
+
+
+/**
+ BM回复历史记录情况
+ @param historyRecordStatus
+ 00：无历史记录
+ 01：开始发送历史记录
+ 02：结束发送历史记录
+ */
+- (void)historyRecordBMReplyStatus:(EightScaleHistoryRecordCodeType)historyRecordStatus;
+
+//mcu算法一条记录结束后回调
+- (void)mcuAlgorithmHistoryRecordBMReplyFinishRecord:(ELEightScaleMCUAlgorithmHistoryDataModel*)mcuAlgorithmHistoryRecordModel;
+
+//单频app算法一条记录结束后回调
+- (void)appAlgorithmSingleFrequencyHistoryRecordBMReplyFinishRecord:(ELEightScaleAPPAlgorithmSingleFrequencyHistoryDataModel*)appAlgorithmSingleFrequencyHistoryRecordModel;
+
+//双频app算法一条记录结束后回调
+- (void)appAlgorithmDoubleFrequencyHistoryRecordBMReplyFinishRecord:(ELEightScaleAPPAlgorithmDoubleFrequencyHistoryDataModel*)appAlgorithmDoubleFrequencyHistoryRecordModel;
+
+
 @end
 
 @interface ELEightScaleBleManager : ELBluetoothManager
@@ -128,6 +170,27 @@ NS_ASSUME_NONNULL_BEGIN
 
 /** 下发操作指令 */
 - (void)eightScaleSendOperationWithType:(enum EightScaleOperationType)type unit:(NSInteger)unit;
+
+/** 设置用户信息(新格式) */
+- (void)eightScaleNewSendUserDataWithUserModel:(ELEightScaleBleUserModel *)model;
+
+/** 下发用户列表（APP更新用户列表给BM模块） */
+- (void)sendUpdateUserListWithUsers:(NSArray<ELEightScaleBleUserModel *> *)users;
+
+/** 下发用户列表更新完成（通知BM模块） */
+- (void)sendUpdateUserListFinished;
+
+/** 更新个人用户信息给BM模块 */
+- (void)sendUpdatePersonalInfoWithUserModel:(ELEightScaleBleUserModel *)model;
+
+/** 请求同步历史记录 */
+- (void)sendSyncHistoryRequest;
+
+/** APP/BM回复用户信息 */
+- (void)replyUserInformation:(ELEightScaleBleUserModel *)userInfo;
+
+//APP获取MCU支持的模式
+- (void)eightScaleSendGetMcuSupportFunction;
 @end
 
 NS_ASSUME_NONNULL_END

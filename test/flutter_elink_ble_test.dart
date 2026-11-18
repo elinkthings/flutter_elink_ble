@@ -31,6 +31,8 @@ class MockElinkBlePlatform
   String? lastWriteRemoteId;
   Uint8List lastWriteData = Uint8List(0);
   String? lastWriteType;
+  String? lastWriteServiceUuid;
+  String? lastWriteCharacteristicUuid;
   String? lastWriteA6RemoteId;
   Uint8List lastWriteA6Payload = Uint8List(0);
   final List<Uint8List> writeA6Payloads = <Uint8List>[];
@@ -43,6 +45,59 @@ class MockElinkBlePlatform
   String? lastHandshakeEncryptRemoteId;
   String? lastCheckHandshakeRemoteId;
   int disposeCallCount = 0;
+  String? lastPriorityRemoteId;
+  int? lastPriority;
+  bool requestAccepted = true;
+  int immediateWriteCallCount = 0;
+
+  /// 记录统一 MTU 请求并返回配置的模拟结果。
+  @override
+  Future<bool> setMtu(String remoteId, int mtu) async {
+    lastSetMtuRemoteId = remoteId;
+    lastSetMtu = mtu;
+    return requestAccepted;
+  }
+
+  /// 记录统一 PHY 请求并返回配置的模拟结果。
+  @override
+  Future<bool> setPreferredPhy({
+    required String remoteId,
+    required int txPhy,
+    required int rxPhy,
+  }) async {
+    lastSetPhyRemoteId = remoteId;
+    lastSetTxPhy = txPhy;
+    lastSetRxPhy = rxPhy;
+    return requestAccepted;
+  }
+
+  /// 记录统一重发配置，供跨平台接口测试使用。
+  @override
+  Future<void> setCommandResendCount(int resendCount) async {
+    lastAndroidCommandResendCount = resendCount;
+  }
+
+  /// 记录连接优先级及其目标设备。
+  @override
+  Future<bool> setConnectPriority(String remoteId, int priority) async {
+    lastPriorityRemoteId = remoteId;
+    lastPriority = priority;
+    return requestAccepted;
+  }
+
+  /// 记录即时发送请求，不执行真实蓝牙操作。
+  @override
+  Future<bool> sendDataNow({
+    required String remoteId,
+    required Uint8List data,
+    required String type,
+  }) async {
+    immediateWriteCallCount += 1;
+    lastWriteRemoteId = remoteId;
+    lastWriteData = data;
+    lastWriteType = type;
+    return requestAccepted;
+  }
 
   @override
   Stream<Map<dynamic, dynamic>> get events => eventController.stream;
@@ -133,10 +188,14 @@ class MockElinkBlePlatform
     required String remoteId,
     required Uint8List data,
     required String type,
+    String? serviceUuid,
+    String? characteristicUuid,
   }) async {
     lastWriteRemoteId = remoteId;
     lastWriteData = data;
     lastWriteType = type;
+    lastWriteServiceUuid = serviceUuid;
+    lastWriteCharacteristicUuid = characteristicUuid;
   }
 
   @override
@@ -261,6 +320,99 @@ void main() {
     await ElinkBle.openBluetooth();
 
     expect(fakePlatform.openedBluetooth, isTrue);
+  });
+
+  // 验证新旧扫描参数共享去重配置，冲突时不会启动或改变扫描。
+  test('unified scan mode resolves aliases and rejects conflicts', () async {
+    final fakePlatform = MockElinkBlePlatform();
+    FlutterElinkBlePlatform.instance = fakePlatform;
+    await ElinkBle.startScan(scanMode: ElinkScanMode.lowLatency);
+    await ElinkBle.startScan(androidScanMode: ElinkAndroidScanMode.lowLatency);
+    await ElinkBle.startScan(
+      scanMode: ElinkScanMode.lowLatency,
+      androidScanMode: ElinkAndroidScanMode.lowLatency,
+    );
+    expect(fakePlatform.startScanCallCount, 1);
+    expect(fakePlatform.lastAndroidScanMode, 2);
+    await expectLater(
+      ElinkBle.startScan(
+        scanMode: ElinkScanMode.lowPower,
+        androidScanMode: ElinkAndroidScanMode.lowLatency,
+      ),
+      throwsArgumentError,
+    );
+    expect(fakePlatform.startScanCallCount, 1);
+    expect(ElinkBle.isScanningNow, isTrue);
+  });
+
+  // 验证统一配置入口的设备、数值、默认值及拒绝结果。
+  test('unified connection settings preserve arguments and results', () async {
+    final fakePlatform = MockElinkBlePlatform();
+    FlutterElinkBlePlatform.instance = fakePlatform;
+    expect(await ElinkBle.setMtu('device-a', 247), isTrue);
+    expect(fakePlatform.lastSetMtuRemoteId, 'device-a');
+    expect(fakePlatform.lastSetMtu, 247);
+    expect(
+      await ElinkBle.setPreferredPhy(
+        'device-b',
+        txPhy: ElinkPhy.phy2M,
+        rxPhy: ElinkPhy.phy1M,
+      ),
+      isTrue,
+    );
+    expect(fakePlatform.lastSetPhyRemoteId, 'device-b');
+    expect(fakePlatform.lastSetTxPhy, 2);
+    expect(fakePlatform.lastSetRxPhy, 1);
+    for (final priority in ElinkConnectionPriority.values) {
+      expect(await ElinkBle.setConnectPriority('device-c', priority), isTrue);
+      expect(fakePlatform.lastPriorityRemoteId, 'device-c');
+      expect(fakePlatform.lastPriority, priority.index);
+    }
+    await ElinkBle.setCommandResendCount(resendCount: 3);
+    expect(fakePlatform.lastAndroidCommandResendCount, 3);
+    await ElinkBle.setCommandResendCount();
+    expect(fakePlatform.lastAndroidCommandResendCount, 0);
+    fakePlatform.requestAccepted = false;
+    expect(await ElinkBle.setMtu('device-a', 247), isFalse);
+    expect(
+      await ElinkBle.setConnectPriority(
+        'device-a',
+        ElinkConnectionPriority.high,
+      ),
+      isFalse,
+    );
+    expect(
+      await ElinkBle.setPreferredPhy(
+        'device-a',
+        txPhy: ElinkPhy.phy1M,
+        rxPhy: ElinkPhy.phy1M,
+      ),
+      isFalse,
+    );
+  });
+
+  // 验证完整包不被重组、写入类型及空包行为，并保留原生拒绝结果。
+  test('sendDataNow preserves packet and SDK acceptance', () async {
+    final fakePlatform = MockElinkBlePlatform();
+    FlutterElinkBlePlatform.instance = fakePlatform;
+    final packet = ElinkDataProcessor.wrapA6Frame([0x01, 0x02]);
+    expect(await ElinkBle.sendDataNow('device-a', packet), isTrue);
+    expect(fakePlatform.lastWriteRemoteId, 'device-a');
+    expect(fakePlatform.lastWriteData, packet);
+    expect(fakePlatform.lastWriteType, 'withoutResponse');
+    fakePlatform.requestAccepted = false;
+    expect(
+      await ElinkBle.sendDataNow(
+        'device-b',
+        packet,
+        type: ElinkWriteType.withResponse,
+      ),
+      isFalse,
+    );
+    expect(fakePlatform.lastWriteRemoteId, 'device-b');
+    expect(fakePlatform.lastWriteType, 'withResponse');
+    expect(await ElinkBle.sendDataNow('device-a', []), isFalse);
+    expect(fakePlatform.immediateWriteCallCount, 2);
   });
 
   test('startScan uses default Elink service UUIDs', () async {
@@ -396,6 +548,78 @@ void main() {
 
     await ElinkBle.setAndroidCommandResendCount();
     expect(fakePlatform.lastAndroidCommandResendCount, 0);
+  });
+
+  // 验证自定义 UUID 标准化、数据不变，以及后续默认写入不残留目标配置。
+  test(
+    'write supports paired custom UUIDs without changing default writes',
+    () async {
+      final fakePlatform = MockElinkBlePlatform();
+      FlutterElinkBlePlatform.instance = fakePlatform;
+      await ElinkBle.write(
+        'device-a',
+        [0x01, 0x02],
+        serviceUuid: const ElinkGuid('fff0'),
+        characteristicUuid: const ElinkGuid('1234ABCD'),
+        type: ElinkWriteType.withResponse,
+      );
+      expect(fakePlatform.lastWriteRemoteId, 'device-a');
+      expect(fakePlatform.lastWriteData, [0x01, 0x02]);
+      expect(fakePlatform.lastWriteType, 'withResponse');
+      expect(
+        fakePlatform.lastWriteServiceUuid,
+        '0000fff0-0000-1000-8000-00805f9b34fb',
+      );
+      expect(
+        fakePlatform.lastWriteCharacteristicUuid,
+        '1234abcd-0000-1000-8000-00805f9b34fb',
+      );
+      await ElinkBle.write(
+        'device-b',
+        [0x03],
+        serviceUuid: const ElinkGuid('12345678-1234-5678-ABCD-1234567890AB'),
+        characteristicUuid: const ElinkGuid(
+          '12345678-1234-5678-ABCD-1234567890AC',
+        ),
+      );
+      expect(
+        fakePlatform.lastWriteServiceUuid,
+        '12345678-1234-5678-abcd-1234567890ab',
+      );
+      await ElinkBle.write('device-a', [0xA6, 0]);
+      expect(fakePlatform.lastWriteServiceUuid, isNull);
+      expect(fakePlatform.lastWriteCharacteristicUuid, isNull);
+      expect(fakePlatform.lastWriteType, 'withoutResponse');
+    },
+  );
+
+  // 拒绝缺少配对参数和非法 UUID，不发起任何原生写入。
+  test('write rejects partial or invalid UUIDs before native calls', () {
+    final fakePlatform = MockElinkBlePlatform();
+    FlutterElinkBlePlatform.instance = fakePlatform;
+    expect(
+      () =>
+          ElinkBle.write('device-a', [1], serviceUuid: const ElinkGuid('FFF0')),
+      throwsArgumentError,
+    );
+    expect(
+      () => ElinkBle.write('device-a', [
+        1,
+      ], characteristicUuid: const ElinkGuid('FFF1')),
+      throwsArgumentError,
+    );
+    for (final invalid in ['', 'XYZ0', '1-2-3-4-5', ' FFF0', 'FFF0\n']) {
+      expect(
+        () => ElinkBle.write(
+          'device-a',
+          [1],
+          serviceUuid: ElinkGuid(invalid),
+          characteristicUuid: const ElinkGuid('FFF1'),
+        ),
+        throwsArgumentError,
+      );
+    }
+    expect(fakePlatform.lastWriteRemoteId, isNull);
   });
 
   test('writeA6 and writeA7 forward SDK payload arguments', () async {

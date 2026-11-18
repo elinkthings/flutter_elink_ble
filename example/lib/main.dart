@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io' show Platform;
+import 'dart:math' show Random;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_elink_ble/flutter_elink_ble.dart';
@@ -336,6 +337,10 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
       onClearLogs: () => _clearDeviceLogs(remoteId),
       onDisconnect: () => unawaited(_disconnectDevice(remoteId)),
       onGetBmVersion: () => unawaited(_getBmVersion(remoteId)),
+      onSendRandomQuery: () => unawaited(_sendRandomQuery(remoteId)),
+      onSetConnectPriority: Platform.isAndroid
+          ? (priority) => unawaited(_setConnectPriority(remoteId, priority))
+          : null,
       mtuActionLabel: Platform.isIOS
           ? 'Get iOS MTU'
           : Platform.isAndroid
@@ -428,6 +433,36 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
     }
   }
 
+  /// 从 BM 版本和电池状态查询中随机选择一条，以完整 A6 帧即时发送。
+  Future<void> _sendRandomQuery(String remoteId) async {
+    const commands = [0x0E, 0x46, 0x28];
+    final command = commands[Random().nextInt(commands.length)];
+    final packet = ElinkDataProcessor.wrapA6Frame([command]);
+    final hex = ElinkDataProcessor.formatHex(packet);
+    try {
+      final accepted = await ElinkBle.sendDataNow(remoteId, packet);
+      _addDeviceLog(remoteId, '[sendDataNow] $remoteId: $hex accepted=$accepted');
+    } catch (error) {
+      _addDeviceLog(remoteId, '[sendDataNow] $remoteId: $hex $error');
+    }
+  }
+
+  /// 向当前设备请求所选连接优先级，并记录原生 SDK 是否接受。
+  Future<void> _setConnectPriority(
+    String remoteId,
+    ElinkConnectionPriority priority,
+  ) async {
+    try {
+      final accepted = await ElinkBle.setConnectPriority(remoteId, priority);
+      _addDeviceLog(
+        remoteId,
+        '[setConnectPriority] $remoteId: ${priority.name} accepted=$accepted',
+      );
+    } catch (error) {
+      _addDeviceLog(remoteId, '[setConnectPriority] $remoteId: ${priority.name} $error');
+    }
+  }
+
   /// 根据当前平台处理 MTU：Android 请求 517，iOS 查询最大写入长度。
   Future<void> _handleMtu(
     String remoteId, {
@@ -444,14 +479,10 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
         );
         return;
       }
-      if (!Platform.isAndroid) {
-        _addDeviceLog(remoteId, '[mtu] $remoteId: unsupported platform');
-        return;
-      }
-      final requested = await ElinkBle.setAndroidMtu(remoteId, androidMtu);
+      final requested = await ElinkBle.setMtu(remoteId, androidMtu);
       _addDeviceLog(
         remoteId,
-        '[setAndroidMtu] $remoteId: '
+        '[setMtu] $remoteId: '
         'mtu=$androidMtu requested=$requested',
       );
     } catch (error) {
@@ -470,7 +501,7 @@ class _ElinkHomePageState extends State<ElinkHomePage> {
     final previousCount = _androidCommandResendCount;
     setState(() => _androidCommandResendCount = resendCount);
     try {
-      await ElinkBle.setAndroidCommandResendCount(resendCount: resendCount);
+      await ElinkBle.setCommandResendCount(resendCount: resendCount);
       if (logRemoteId != null) {
         _addDeviceLog(logRemoteId, '[androidResend] resendCount=$resendCount');
       }
