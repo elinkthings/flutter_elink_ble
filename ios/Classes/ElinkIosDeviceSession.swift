@@ -2,11 +2,12 @@ import AILinkBleSDK
 import CoreBluetooth
 import Flutter
 import Foundation
+import ObjectiveC
 
 /// iOS 单设备连接会话，每个 remoteId 使用独立 ELAILinkBleManager，避免 current peripheral 覆盖多连状态。
 final class ElinkIosDeviceSession: NSObject, ELAILinkBleManagerDelegate {
   let sessionId = UUID().uuidString
-  private let manager = ELAILinkBleManager()
+  private let manager: ELAILinkBleManager
   private let remoteId: String
   private let callbacks: ElinkIosDeviceSessionCallbacks
   private var ailinkPeripheral: ELAILinkPeripheral?
@@ -28,11 +29,19 @@ final class ElinkIosDeviceSession: NSObject, ELAILinkBleManagerDelegate {
   }
 
   /// 创建指定 remoteId 的 iOS 连接会话。
-  init(remoteId: String, callbacks: ElinkIosDeviceSessionCallbacks) {
+  init(remoteId: String, cid: UInt16, callbacks: ElinkIosDeviceSessionCallbacks) {
     self.remoteId = remoteId
     self.callbacks = callbacks
+    let writeManager = cid == 0x0095 && ElinkIosToothbrushWriteManager.isSupported
+      ? ElinkIosToothbrushWriteManager()
+      : nil
+    self.manager = writeManager ?? ELAILinkBleManager()
     super.init()
     manager.ailinkDelegate = self
+    writeManager?.onBlockWritten = { [weak self] characteristic, data in
+      guard let self, self.connectionReady, !self.shouldIgnoreSdkCallback() else { return }
+      self.callbacks.emitCharacteristicEvent(self.remoteId, "write", characteristic, data)
+    }
     ElinkNativeLogger.debug("session init remoteId=\(remoteId) sessionId=\(sessionId)")
   }
 
@@ -81,6 +90,7 @@ final class ElinkIosDeviceSession: NSObject, ELAILinkBleManagerDelegate {
     disconnectResults.append(result)
     guard !disconnecting else { return }
     disconnecting = true
+    (manager as? ElinkIosToothbrushWriteManager)?.clearWrites()
     ElinkNativeLogger.info("session disconnect requested remoteId=\(remoteId) sessionId=\(sessionId)")
     callbacks.emitConnection(remoteId, "disconnecting", nil)
     connectionReady = false
@@ -196,6 +206,7 @@ final class ElinkIosDeviceSession: NSObject, ELAILinkBleManagerDelegate {
   private func invalidate(disconnectPeripheral: Bool) {
     guard !invalidated else { return }
     invalidated = true
+    (manager as? ElinkIosToothbrushWriteManager)?.clearWrites()
     ElinkNativeLogger.debug(
       "session invalidate remoteId=\(remoteId) sessionId=\(sessionId) disconnectPeripheral=\(disconnectPeripheral)"
     )
@@ -543,19 +554,19 @@ final class ElinkIosDeviceSession: NSObject, ELAILinkBleManagerDelegate {
     ElinkNativeLogger.debug(
       "notificationStateChanged remoteId=\(remoteId) uuid=\(callbacks.shortUuid(characteristic.uuid))"
     )
-    callbacks.emitCharacteristicEvent(remoteId, "notificationStateChanged", characteristic)
+    callbacks.emitCharacteristicEvent(remoteId, "notificationStateChanged", characteristic, nil)
   }
 
   func peripheralDidUpdateValue(forCharacteristic characteristic: CBCharacteristic) {
     guard !shouldIgnoreSdkCallback() else { return }
     ElinkNativeLogger.debug("characteristicChanged remoteId=\(remoteId) uuid=\(callbacks.shortUuid(characteristic.uuid))")
-    callbacks.emitCharacteristicEvent(remoteId, "changed", characteristic)
+    callbacks.emitCharacteristicEvent(remoteId, "changed", characteristic, nil)
   }
 
-  func didWriteValue(forCharacteristic characteristic: CBCharacteristic) {
+  func didWriteValue(for characteristic: CBCharacteristic) {
     guard !shouldIgnoreSdkCallback() else { return }
     ElinkNativeLogger.debug("didWriteValue remoteId=\(remoteId) uuid=\(callbacks.shortUuid(characteristic.uuid))")
-    callbacks.emitCharacteristicEvent(remoteId, "write", characteristic)
+    callbacks.emitCharacteristicEvent(remoteId, "write", characteristic, Data())
   }
 
   func peripheralDidReadRSSI(_ RSSI: NSNumber) {
@@ -601,5 +612,65 @@ final class ElinkIosDeviceSession: NSObject, ELAILinkBleManagerDelegate {
     default:
       return
     }
+  }
+}
+
+/// Observe the SDK's actual FFE1 writes for a 0095 session. Its public delegate
+/// callback does not include either the original packet or the CoreBluetooth error.
+private final class ElinkIosToothbrushWriteManager: ELAILinkBleManager {
+  private typealias Write = @convention(c)
+    (ELAILinkBleManager, Selector, NSData, CBCharacteristic, Int) -> Void
+  private typealias DidWrite = @convention(c)
+    (ELAILinkBleManager, Selector, CBPeripheral, CBCharacteristic, NSError?) -> Void
+
+  private static let writeSelector = NSSelectorFromString("writeValue:forCharacteristic:type:")
+  private static let didWriteSelector = NSSelectorFromString("peripheral:didWriteValueForCharacteristic:error:")
+  private static let sdkWrite = class_getInstanceMethod(ELAILinkBleManager.self, writeSelector)
+    .map { unsafeBitCast(method_getImplementation($0), to: Write.self) }
+  private static let sdkDidWrite = class_getInstanceMethod(ELAILinkBleManager.self, didWriteSelector)
+    .map { unsafeBitCast(method_getImplementation($0), to: DidWrite.self) }
+  private static let writeUUID = CBUUID(string: "FFE1")
+  static var isSupported: Bool { sdkWrite != nil && sdkDidWrite != nil }
+
+  // A nil entry reserves a slot for a regular write on the same characteristic.
+  private var pendingWrites: [ObjectIdentifier: [Data?]] = [:]
+  var onBlockWritten: ((CBCharacteristic, Data) -> Void)?
+
+  func clearWrites() {
+    pendingWrites.removeAll()
+  }
+
+  @objc(writeValue:forCharacteristic:type:)
+  private func forwardWrite(_ bytes: NSData, for characteristic: CBCharacteristic, type: CBCharacteristicWriteType) {
+    if type == .withResponse, characteristic.uuid == Self.writeUUID,
+       currentAILinkPeripheral()?.peripheral.state == .connected {
+      let data = Data(referencing: bytes)
+      let isOtaBlock = data.count > 12 && data[0] == 0xB7 &&
+        data[1] == 0x00 && data[2] == 0x95 && data[5] == 0x11
+      pendingWrites[ObjectIdentifier(characteristic), default: []].append(isOtaBlock ? data : nil)
+    }
+    Self.sdkWrite?(self, Self.writeSelector, bytes, characteristic, type.rawValue)
+  }
+
+  @objc(peripheral:didWriteValueForCharacteristic:error:)
+  private func forwardDidWrite(_ peripheral: CBPeripheral, for characteristic: CBCharacteristic, error: NSError?) {
+    let key = ObjectIdentifier(characteristic)
+    if currentAILinkPeripheral()?.peripheral === peripheral,
+       let queue = pendingWrites[key], !queue.isEmpty {
+      let packet = queue[0]
+      pendingWrites[key]?.removeFirst()
+      if pendingWrites[key]?.isEmpty == true {
+        pendingWrites.removeValue(forKey: key)
+      }
+      if let packet {
+        if let error {
+          ElinkNativeLogger.warning("B7 FFE1 write failed: \(error.domain)/\(error.code)")
+        } else {
+          onBlockWritten?(characteristic, packet)
+        }
+        return
+      }
+    }
+    Self.sdkDidWrite?(self, Self.didWriteSelector, peripheral, characteristic, error)
   }
 }

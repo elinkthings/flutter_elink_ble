@@ -120,10 +120,13 @@ extension ElinkBlePlugin {
   func emitCharacteristicEvent(
     remoteId: String,
     operation: String,
-    characteristic: CBCharacteristic
+    characteristic: CBCharacteristic,
+    data: Data?
   ) {
+    let payload = data ?? characteristic.value ?? Data()
+    let logPayload = operation == "write" ? "bytes=\(payload.count)" : "data=\(ElinkNativeLogger.hex(payload))"
     ElinkNativeLogger.debug(
-      "characteristic \(operation) remoteId=\(remoteId) uuid=\(shortUuid(characteristic.uuid)) data=\(ElinkNativeLogger.hex(characteristic.value ?? Data()))"
+      "characteristic \(operation) remoteId=\(remoteId) uuid=\(shortUuid(characteristic.uuid)) \(logPayload)"
     )
     emit([
       "type": "characteristicEvent",
@@ -132,7 +135,7 @@ extension ElinkBlePlugin {
       "serviceUuid": characteristic.service.map { shortUuid($0.uuid) } ?? "",
       "characteristicUuid": shortUuid(characteristic.uuid),
       "descriptorUuid": "",
-      "data": FlutterStandardTypedData(bytes: characteristic.value ?? Data()),
+      "data": FlutterStandardTypedData(bytes: payload),
     ])
   }
 

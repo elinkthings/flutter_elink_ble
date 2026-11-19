@@ -8,7 +8,7 @@ struct ElinkIosDeviceSessionCallbacks {
   let emitBmVersion: (String, String, Int, Data) -> Void
   let emitError: (String, String) -> Void
   let emitEvent: ([String: Any]) -> Void
-  let emitCharacteristicEvent: (String, String, CBCharacteristic) -> Void
+  let emitCharacteristicEvent: (String, String, CBCharacteristic, Data?) -> Void
   let emitRssi: (String, Int) -> Void
   let emitProtocolData: (Data, String, String) -> Void
   let emitPassthroughData: (Data, String) -> Void
