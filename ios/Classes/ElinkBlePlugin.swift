@@ -538,6 +538,7 @@ public class ElinkBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
     clearHandshakeSeed(remoteId: remoteId)
     let session = deviceSessions[remoteId] ?? ElinkIosDeviceSession(
       remoteId: remoteId,
+      cid: peripheral.cid,
       callbacks: makeDeviceSessionCallbacks()
     )
     deviceSessions[remoteId] = session
@@ -738,11 +739,12 @@ public class ElinkBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
       emitEvent: { [weak self] event in
         self?.emit(event)
       },
-      emitCharacteristicEvent: { [weak self] remoteId, operation, characteristic in
+      emitCharacteristicEvent: { [weak self] remoteId, operation, characteristic, data in
         self?.emitCharacteristicEvent(
           remoteId: remoteId,
           operation: operation,
-          characteristic: characteristic
+          characteristic: characteristic,
+          data: data
         )
       },
       emitRssi: { [weak self] remoteId, rssi in
