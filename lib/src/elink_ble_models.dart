@@ -284,6 +284,9 @@ class ElinkGuid {
   int get hashCode => value.hashCode;
 }
 
+/// 已绑定设备在 iOS 无广播时用于重连的 AiLink 标识。
+typedef ElinkIosReconnectIdentity = ({int cid, int vid, int pid});
+
 /// 一个可连接的 BLE peripheral。
 /// A connectable BLE peripheral.
 class ElinkDevice {
@@ -292,6 +295,7 @@ class ElinkDevice {
     this.platformName = '',
     this.connectionState = ElinkConnectionState.disconnected,
     this.macAddress = '',
+    this.iosReconnectIdentity,
   });
 
   final String remoteId;
@@ -305,17 +309,22 @@ class ElinkDevice {
   /// Device MAC address parsed from manufacturerData advertisement content.
   final String macAddress;
 
+  /// 仅已绑定设备的缓存 UUID 重连需要提供。
+  final ElinkIosReconnectIdentity? iosReconnectIdentity;
+
   ElinkDevice copyWith({
     String? remoteId,
     String? platformName,
     ElinkConnectionState? connectionState,
     String? macAddress,
+    ElinkIosReconnectIdentity? iosReconnectIdentity,
   }) {
     return ElinkDevice(
       remoteId: remoteId ?? this.remoteId,
       platformName: platformName ?? this.platformName,
       connectionState: connectionState ?? this.connectionState,
       macAddress: macAddress ?? this.macAddress,
+      iosReconnectIdentity: iosReconnectIdentity ?? this.iosReconnectIdentity,
     );
   }
 

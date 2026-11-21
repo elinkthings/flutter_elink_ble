@@ -4,6 +4,35 @@ import Flutter
 import Foundation
 import ObjectiveC
 
+/// 缓存直连时用于 SDK 握手和 A7 封包的已绑定设备标识。
+struct ElinkIosReconnectIdentity {
+  let cid: UInt16
+  let vid: UInt16
+  let pid: UInt16
+  let macAddress: String
+  let macData: Data
+
+  init?(arguments: [String: Any]) {
+    guard let cidValue = arguments["cid"] as? Int, let cid = UInt16(exactly: cidValue), cid != 0,
+          let vidValue = arguments["vid"] as? Int, let vid = UInt16(exactly: vidValue),
+          let pidValue = arguments["pid"] as? Int, let pid = UInt16(exactly: pidValue),
+          let mac = arguments["macAddress"] as? String else { return nil }
+    let hex = Array(mac.trimmingCharacters(in: .whitespacesAndNewlines)
+      .replacingOccurrences(of: ":", with: "").replacingOccurrences(of: "-", with: ""))
+    guard hex.count == 12 else { return nil }
+    let bytes = stride(from: 0, to: hex.count, by: 2).compactMap {
+      UInt8(String(hex[$0..<($0 + 2)]), radix: 16)
+    }
+    guard bytes.count == 6, bytes.contains(where: { $0 != 0 }) else { return nil }
+    self.cid = cid
+    self.vid = vid
+    self.pid = pid
+    self.macAddress = bytes.map { String(format: "%02X", $0) }.joined(separator: ":")
+    // SDK 使用广播中的小端 MAC 原始字节。
+    self.macData = Data(bytes.reversed())
+  }
+}
+
 /// iOS 单设备连接会话，每个 remoteId 使用独立 ELAILinkBleManager，避免 current peripheral 覆盖多连状态。
 final class ElinkIosDeviceSession: NSObject, ELAILinkBleManagerDelegate {
   let sessionId = UUID().uuidString
@@ -12,6 +41,8 @@ final class ElinkIosDeviceSession: NSObject, ELAILinkBleManagerDelegate {
   private let callbacks: ElinkIosDeviceSessionCallbacks
   private var ailinkPeripheral: ELAILinkPeripheral?
   private var pendingConnectRemoteId: String?
+  private var reconnectIdentity: ElinkIosReconnectIdentity?
+  private var waitingForTargetAdvertisement = false
   private var pendingScanServices: [CBUUID] = []
   private var connectTimer: Timer?
   private var disconnectResults: [FlutterResult] = []
@@ -52,7 +83,8 @@ final class ElinkIosDeviceSession: NSObject, ELAILinkBleManagerDelegate {
 
   /// 发起当前 session 的 BLE 连接，优先使用本 session manager retrieve 的外设，未命中再扫描。
   func connect(
-    knownPeripheral: ELAILinkPeripheral,
+    knownPeripheral: ELAILinkPeripheral?,
+    reconnectIdentity: ElinkIosReconnectIdentity?,
     timeoutMs: Int,
     scanServices: [CBUUID]
   ) {
@@ -66,6 +98,8 @@ final class ElinkIosDeviceSession: NSObject, ELAILinkBleManagerDelegate {
       "session connect remoteId=\(remoteId) sessionId=\(sessionId) timeoutMs=\(timeoutMs) services=\(scanServices.map { callbacks.shortUuid($0) })"
     )
     ailinkPeripheral = knownPeripheral
+    self.reconnectIdentity = reconnectIdentity
+    waitingForTargetAdvertisement = false
     pendingConnectRemoteId = remoteId
     pendingScanServices = scanServices
     connectionReady = false
@@ -226,7 +260,7 @@ final class ElinkIosDeviceSession: NSObject, ELAILinkBleManagerDelegate {
 
   /// 等待当前 session 的蓝牙 manager 可用后优先快速连接，未命中再启动目标扫描。
   private func startConnectWhenBluetoothReady(attemptsRemaining: Int) {
-    guard !invalidated else { return }
+    guard !invalidated, pendingConnectRemoteId != nil, !waitingForTargetAdvertisement else { return }
     if invalidateAdapterSessionIfShuttingDown() { return }
     switch manager.central.state {
     case .poweredOn:
@@ -259,30 +293,46 @@ final class ElinkIosDeviceSession: NSObject, ELAILinkBleManagerDelegate {
   private func connectRetrievedPeripheralIfAvailable() -> Bool {
     guard !invalidated else { return false }
     guard pendingConnectRemoteId == remoteId,
-          let identifier = UUID(uuidString: remoteId),
-          let knownPeripheral = ailinkPeripheral else {
+          let identifier = UUID(uuidString: remoteId) else {
       return false
     }
     let retrievedPeripherals = manager.central.retrievePeripherals(
       withIdentifiers: [identifier]
     )
     guard let cbPeripheral = retrievedPeripherals.first(where: {
-      callbacks.remoteId($0) == remoteId
+      $0.identifier == identifier
     }) else {
       ElinkNativeLogger.debug("retrievePeripheral miss remoteId=\(remoteId) sessionId=\(sessionId)")
       return false
     }
+    let target: ELAILinkPeripheral
+    if let knownPeripheral = ailinkPeripheral {
+      target = copyAILinkPeripheral(from: knownPeripheral, peripheral: cbPeripheral)
+    } else if let identity = reconnectIdentity {
+      target = ELAILinkPeripheral()
+      target.peripheral = cbPeripheral
+      target.identifier = cbPeripheral.identifier
+      target.advertisementData = [:]
+      target.rssi = 0
+      target.timestamp = Date().timeIntervalSince1970
+      target.cid = identity.cid
+      target.vid = identity.vid
+      target.pid = identity.pid
+      target.macAddressString = identity.macAddress
+      target.macData = identity.macData
+    } else {
+      return false
+    }
     ElinkNativeLogger.debug("retrievePeripheral hit remoteId=\(remoteId) sessionId=\(sessionId)")
-    connectPeripheral(
-      copyAILinkPeripheral(from: knownPeripheral, peripheral: cbPeripheral)
-    )
+    connectPeripheral(target)
     return true
   }
 
   /// 使用当前 session 的 manager 扫描待连接的目标设备。
   private func startConnectScan() {
     guard !invalidated else { return }
-    guard pendingConnectRemoteId != nil else { return }
+    guard pendingConnectRemoteId != nil, !waitingForTargetAdvertisement else { return }
+    waitingForTargetAdvertisement = true
     ElinkNativeLogger.debug(
       "session startConnectScan remoteId=\(remoteId) sessionId=\(sessionId) services=\(pendingScanServices.map { callbacks.shortUuid($0) })"
     )
@@ -377,7 +427,7 @@ final class ElinkIosDeviceSession: NSObject, ELAILinkBleManagerDelegate {
   /// 判断扫描到的外设是否为本 session 要连接的目标。
   private func isTargetPeripheral(_ peripheral: ELAILinkPeripheral) -> Bool {
     guard let targetRemoteId = pendingConnectRemoteId else { return false }
-    return callbacks.remoteId(peripheral.peripheral) == targetRemoteId
+    return peripheral.peripheral.identifier == UUID(uuidString: targetRemoteId)
   }
 
   /// 在连接终态回调前识别关闭或重置状态，并交给插件统一失效全部 session。
@@ -404,7 +454,7 @@ final class ElinkIosDeviceSession: NSObject, ELAILinkBleManagerDelegate {
       return
     }
     ElinkNativeLogger.debug("managerDidUpdateState poweredOn remoteId=\(remoteId) sessionId=\(sessionId)")
-    startConnectScan()
+    startConnectWhenBluetoothReady(attemptsRemaining: 0)
   }
 
   /// 处理当前 session manager 扫描到的单个外设。

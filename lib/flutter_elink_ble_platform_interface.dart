@@ -52,6 +52,7 @@ abstract class FlutterElinkBlePlatform extends PlatformInterface {
     required String remoteId,
     required int timeoutMs,
     required bool autoConnect,
+    Map<String, Object?>? iosReconnectIdentity,
   }) {
     throw UnimplementedError('connect() has not been implemented.');
   }
