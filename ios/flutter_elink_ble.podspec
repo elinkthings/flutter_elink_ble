@@ -4,7 +4,7 @@
 #
 Pod::Spec.new do |s|
   s.name             = 'flutter_elink_ble'
-  s.version          = '0.3.3'
+  s.version          = '0.3.5'
   s.summary          = 'ElinkThings BLE SDK plugin.'
   s.description      = <<-DESC
 ElinkThings BLE SDK plugin for scanning, connecting, and processing Elink BLE data.

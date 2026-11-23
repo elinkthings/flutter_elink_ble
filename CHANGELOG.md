@@ -1,3 +1,10 @@
+## 0.3.5
+
+* On iOS, `ElinkBle.connect` can reconnect to a previously bound device after
+  a scan timeout using its cached UUID, MAC address, and `iosReconnectIdentity`.
+  If CoreBluetooth cannot retrieve the peripheral by UUID, the plugin scans
+  for the target device.
+
 ## 0.3.3
 
 * Added optional paired service/characteristic UUIDs to `write`, with strict

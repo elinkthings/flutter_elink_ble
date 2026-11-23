@@ -33,7 +33,7 @@ flutter pub add flutter_elink_ble
 
 ```yaml
 dependencies:
-  flutter_elink_ble: ^0.3.3
+  flutter_elink_ble: ^0.3.5
 ```
 
 ## Android 配置
