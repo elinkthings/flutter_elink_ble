@@ -19,6 +19,7 @@ class MockElinkBlePlatform
   int startScanCallCount = 0;
   bool openedBluetooth = false;
   String? lastConnectedRemoteId;
+  Map<String, Object?>? lastIosReconnectIdentity;
   String? lastDisconnectedRemoteId;
   String? lastReadRssiRemoteId;
   String? lastSetMtuRemoteId;
@@ -133,8 +134,10 @@ class MockElinkBlePlatform
     required String remoteId,
     required int timeoutMs,
     required bool autoConnect,
+    Map<String, Object?>? iosReconnectIdentity,
   }) async {
     lastConnectedRemoteId = remoteId;
+    lastIosReconnectIdentity = iosReconnectIdentity;
   }
 
   @override
@@ -481,9 +484,30 @@ void main() {
     await ElinkBle.write(device.remoteId, [0xA6, 0x00, 0x00, 0x6A]);
 
     expect(fakePlatform.lastConnectedRemoteId, device.remoteId);
+    expect(fakePlatform.lastIosReconnectIdentity, isNull);
     expect(fakePlatform.lastWriteRemoteId, device.remoteId);
     expect(fakePlatform.lastWriteData, [0xA6, 0x00, 0x00, 0x6A]);
     expect(fakePlatform.lastWriteType, 'withoutResponse');
+  });
+
+  test('cached reconnect forwards AiLink identity from the device', () async {
+    final fakePlatform = MockElinkBlePlatform();
+    FlutterElinkBlePlatform.instance = fakePlatform;
+    const device = ElinkDevice(
+      remoteId: '00000000-0000-4000-8000-000000000012',
+      macAddress: '02:11:22:33:44:55',
+      iosReconnectIdentity: (cid: 0x002D, vid: 2, pid: 3),
+    );
+
+    await ElinkBle.connect(device.copyWith());
+
+    expect(fakePlatform.lastConnectedRemoteId, device.remoteId);
+    expect(fakePlatform.lastIosReconnectIdentity, {
+      'cid': 0x002D,
+      'vid': 2,
+      'pid': 3,
+      'macAddress': device.macAddress,
+    });
   });
 
   test('disconnect forwards to platform', () async {

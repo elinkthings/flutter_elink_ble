@@ -150,6 +150,30 @@ void main() {
     expect(calls.single.arguments, isNull);
   });
 
+  test('cached iOS connect includes identity and its original deadline', () async {
+    const remoteId = '00000000-0000-4000-8000-000000000012';
+    const identity = {
+      'cid': 0x002D,
+      'vid': 2,
+      'pid': 3,
+      'macAddress': '02:11:22:33:44:55',
+    };
+    await platform.connect(
+      remoteId: remoteId,
+      timeoutMs: 12000,
+      autoConnect: false,
+      iosReconnectIdentity: identity,
+    );
+
+    expect(calls.single.method, 'connect');
+    expect(calls.single.arguments, {
+      'remoteId': remoteId,
+      'timeoutMs': 12000,
+      'autoConnect': false,
+      'iosReconnectIdentity': identity,
+    });
+  });
+
   test('connect, disconnect, and write use method channel contract', () async {
     await platform.connect(
       remoteId: 'remote',

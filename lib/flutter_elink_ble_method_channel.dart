@@ -70,11 +70,14 @@ class MethodChannelFlutterElinkBle extends FlutterElinkBlePlatform {
     required String remoteId,
     required int timeoutMs,
     required bool autoConnect,
+    Map<String, Object?>? iosReconnectIdentity,
   }) {
     return methodChannel.invokeMethod<void>('connect', <String, Object?>{
       'remoteId': remoteId,
       'timeoutMs': timeoutMs,
       'autoConnect': autoConnect,
+      if (iosReconnectIdentity != null)
+        'iosReconnectIdentity': iosReconnectIdentity,
     });
   }
 

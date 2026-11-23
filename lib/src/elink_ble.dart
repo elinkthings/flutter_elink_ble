@@ -318,10 +318,19 @@ class ElinkBle {
     bool autoConnect = false,
   }) {
     _ensureListening();
+    final identity = device.iosReconnectIdentity;
     return _platform.connect(
       remoteId: device.remoteId,
       timeoutMs: timeout.inMilliseconds,
       autoConnect: autoConnect,
+      iosReconnectIdentity: identity == null
+          ? null
+          : {
+              'cid': identity.cid,
+              'vid': identity.vid,
+              'pid': identity.pid,
+              'macAddress': device.macAddress,
+            },
     );
   }
 

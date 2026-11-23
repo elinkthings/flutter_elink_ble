@@ -109,8 +109,12 @@ public class ElinkBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
         return
       }
       let timeoutMs = args["timeoutMs"] as? Int ?? 15000
-      connect(remoteId: remoteId, timeoutMs: timeoutMs)
-      result(nil)
+      connect(
+        remoteId: remoteId,
+        timeoutMs: timeoutMs,
+        reconnectArguments: args["iosReconnectIdentity"],
+        result: result
+      )
     case "disconnect":
       guard
         let args = call.arguments as? [String: Any],
@@ -528,25 +532,45 @@ public class ElinkBlePlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
   }
 
   /// 使用独立 iOS session 连接指定 remoteId。
-  private func connect(remoteId: String, timeoutMs: Int) {
-    guard let peripheral = scanResults[remoteId] else {
+  private func connect(
+    remoteId: String,
+    timeoutMs: Int,
+    reconnectArguments: Any?,
+    result: FlutterResult
+  ) {
+    let peripheral = scanResults[remoteId]
+    var reconnectIdentity: ElinkIosReconnectIdentity?
+    if peripheral == nil, let reconnectArguments {
+      guard UUID(uuidString: remoteId) != nil,
+            let arguments = reconnectArguments as? [String: Any],
+            let identity = ElinkIosReconnectIdentity(arguments: arguments) else {
+        result(FlutterError(code: "bad_args", message: "Invalid iOS reconnect identity", details: nil))
+        return
+      }
+      reconnectIdentity = identity
+    }
+    guard let cid = peripheral?.cid ?? reconnectIdentity?.cid else {
       ElinkNativeLogger.warning("connect failed, device not found remoteId=\(remoteId)")
       emitError(code: "device_not_found", message: "Device not found: \(remoteId)")
+      result(nil)
       return
     }
-    ElinkNativeLogger.info("connect remoteId=\(remoteId) timeoutMs=\(timeoutMs)")
+    let source = peripheral == nil ? "cached_uuid" : "advertisement"
+    ElinkNativeLogger.info("connect remoteId=\(remoteId) source=\(source) timeoutMs=\(timeoutMs)")
     clearHandshakeSeed(remoteId: remoteId)
     let session = deviceSessions[remoteId] ?? ElinkIosDeviceSession(
       remoteId: remoteId,
-      cid: peripheral.cid,
+      cid: cid,
       callbacks: makeDeviceSessionCallbacks()
     )
     deviceSessions[remoteId] = session
     session.connect(
       knownPeripheral: peripheral,
+      reconnectIdentity: reconnectIdentity,
       timeoutMs: timeoutMs,
       scanServices: lastScanServiceUuids
     )
+    result(nil)
   }
 
   private func disconnect(remoteId: String, result: @escaping FlutterResult) {
